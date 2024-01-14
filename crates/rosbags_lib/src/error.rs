@@ -6,9 +6,9 @@ pub enum RosError {
     /// Invalid bag version
     InvalidVersion,
     /// Invalid headed.
-    InvalidHeader,
+    InvalidHeader(&'static str),
     /// Invalid record.
-    InvalidRecord,
+    InvalidRecord(&'static str),
     /// Encountered unsupported version in record.
     UnsupportedVersion,
     /// Tried to access outside of rosbag file.
@@ -31,8 +31,8 @@ impl fmt::Display for RosError {
         use RosError::*;
         let s = match self {
             InvalidVersion => "invalid version. Bag is probably corrupted.".to_string(),
-            InvalidHeader => "invalid header".to_string(),
-            InvalidRecord => "invalid record".to_string(),
+            InvalidHeader(t) => format!("Invalid header: {}", t),
+            InvalidRecord(t) => format!("Invalid record: {}", t),
             UnsupportedVersion => "unsupported version".to_string(),
             OutOfBounds => "out of bounds".to_string(),
             UnexpectedChunkSectionRecord(t) => format!("unexpected {} in the chunk section", t),

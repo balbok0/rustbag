@@ -1,4 +1,5 @@
-use std::{sync::Arc, path::Path, collections::{HashMap, HashSet}};
+use std::{sync::Arc, path::Path, collections::{HashMap, HashSet}, borrow::Borrow};
+use bytes::Buf;
 
 use anyhow::{self, Result};
 use object_store::{ObjectMeta, ObjectStore};
@@ -72,21 +73,24 @@ impl Bag {
     }
 
     pub async fn test(&self) -> Result<()> {
-        let bag_header_data_len = self.cursor.read_u32(self.bag_header._data_pos).await? as usize;
+        // Check message parsing
+        let dyn_msg_map = self.borrow_meta().await.borrow_connection_to_id_message();
 
         // Bag bounds 1630169773_000_000_000u64 to 1630169785_000_000_000u64
         let start_ts = 1630169779_000_000_000u64;
         let end_ts = 1630169782_000_000_000u64;
 
         let topics = vec!["/ros_talon/current_position".to_string()];
-        let chunk_positions = self.borrow_meta().await.filter_chunks(Some(&topics), Some(start_ts), Some(end_ts))?;
+        let chunk_positions = self.borrow_meta().await.filter_chunks(None, Some(start_ts), Some(end_ts))?;
 
         let cons: HashSet<_> = self.borrow_meta().await.topic_to_connections.get(&topics[0]).unwrap().clone().iter().map(|c| c._conn).collect();
 
         println!("Chunk positions: {} / {}", chunk_positions.len(), self.borrow_meta().await.chunk_infos.len());
 
 
+        let bar = indicatif::ProgressBar::new(chunk_positions.len() as u64);
         for pos in chunk_positions {
+            bar.inc(1);
             let pos = pos as usize;
             let header_bytes = self.cursor.read_chunk(pos).await.unwrap();
             let header_len = header_bytes.len();
@@ -97,11 +101,13 @@ impl Bag {
             if let record::Record::Chunk(c) = record_with_header {
                 let chunk_bytes = c.decompress(self.cursor.read_chunk(data_pos).await?)?;
 
-                // let chunk_data = ChunkData::try_from_bytes_with_time_check(chunk_bytes, start_ts, end_ts)?;
-                let chunk_data = ChunkData::try_from_bytes_with_con_time_check(chunk_bytes, &cons, start_ts, end_ts)?;
+                let chunk_data = ChunkData::try_from_bytes_with_time_check(chunk_bytes, start_ts, end_ts)?;
+                // let chunk_data = ChunkData::try_from_bytes_with_con_time_check(chunk_bytes, &cons, start_ts, end_ts)?;
 
                 for message_data in chunk_data.message_datas {
-                    println!("Message Data conn: {} Data len: {:?}", message_data._conn, message_data.data.map(|d| d.len()));
+                    println!("Message Data conn: {} Data len: {:?}", message_data._conn, &message_data.data.map(|d| d.len()));
+                    // WARN: Slow!
+                    // let msg = dyn_msg_map.get(&message_data._conn).unwrap().decode(message_data.data.unwrap().reader())?;
                 }
 
                 // println!("ChunkData: {}", chunk_bytes.len());
@@ -109,6 +115,7 @@ impl Bag {
                 return Err(RosError::InvalidRecord("Unexpected record. Expected Chunk").into());
             }
         }
+        bar.finish();
 
         Ok(())
     }

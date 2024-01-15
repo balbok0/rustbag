@@ -84,7 +84,7 @@ impl ChunkData {
         Ok(ChunkData { message_datas })
     }
 
-    pub(crate) fn try_from_bytes_with_con_check(bytes: Bytes, valid_cons: HashSet<u32>) -> Result<Self> {
+    pub(crate) fn try_from_bytes_with_con_check(bytes: Bytes, valid_cons: &HashSet<u32>) -> Result<Self> {
         let mut message_datas = Vec::new();
         for (record, _data_bytes) in RecordBytesIterator::new(bytes) {
             match record {
@@ -101,7 +101,24 @@ impl ChunkData {
         Ok(ChunkData { message_datas })
     }
 
-    pub(crate) fn try_from_bytes_with_con_time_check(bytes: Bytes, valid_cons: HashSet<u32>, start_time: u64, stop_time: u64) -> Result<Self> {
+    pub(crate) fn try_from_bytes_with_time_check(bytes: Bytes, start_time: u64, stop_time: u64) -> Result<Self> {
+        let mut message_datas = Vec::new();
+        for (record, _data_bytes) in RecordBytesIterator::new(bytes) {
+            match record {
+                Record::MessageData(mut x) => {
+                    if start_time <= x._time && x._time <= stop_time {
+                        x.record_data(_data_bytes)?;
+                        message_datas.push(x)
+                    }
+                },
+                Record::Connection(_x) => (), // Ignore connections
+                _ => return Err(RosError::UnexpectedChunkSectionRecord("ChunkData: Got record type that is not MessageData or Connection.").into())
+            }
+        }
+         Ok(ChunkData { message_datas })
+    }
+
+    pub(crate) fn try_from_bytes_with_con_time_check(bytes: Bytes, valid_cons: &HashSet<u32>, start_time: u64, stop_time: u64) -> Result<Self> {
         let mut message_datas = Vec::new();
         for (record, _data_bytes) in RecordBytesIterator::new(bytes) {
             match record {

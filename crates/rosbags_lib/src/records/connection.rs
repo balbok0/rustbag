@@ -61,4 +61,9 @@ impl ConnectionData {
             _callerid
         })
     }
+
+    pub fn parse_def(&self) -> Result<()> {
+        ros_msg::parse_msg::parse_con_msg_def(&self._message_definition)?;
+        Ok(())
+    }
 }

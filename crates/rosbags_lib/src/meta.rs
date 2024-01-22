@@ -2,8 +2,8 @@ use std::{collections::{HashMap, HashSet}, cell::OnceCell, borrow::Borrow};
 
 use bytes::Bytes;
 use anyhow::Result;
-use ros_message::DynamicMsg;
-// use rosrust::DynamicMsg;
+use ros_message::{DynamicMsg, LazyFlatDynamicMsg};
+use ros_msg;
 
 use crate::{iterators::RecordBytesIterator, records::{record::Record, connection::{Connection, ConnectionData}, chunk_info::ChunkInfo, chunk}, error::RosError};
 
@@ -87,19 +87,12 @@ impl Meta {
 
             for con in self.topic_to_connections.values().into_iter().flatten() {
                 let con_data = con.data.get().unwrap(); // Note it exists, since we create it in new
+
+                con_data.parse_def().unwrap();
+                // println!("\nMessage Definition: {}\n\n\n", con_data._message_definition);
                 let msg = DynamicMsg::new(con_data._type.as_str().into(), con_data._message_definition.as_str()).unwrap();
+                // LazyFlatDynamicMsg::try_from(&msg).unwrap();
 
-                let mut msg_name_line = false;
-                for line in con_data._message_definition.lines() {
-                    if msg_name_line {
-                        let msg_name: Vec<_> = line.splitn(3, " ").collect();
-                        let msg_name = msg_name[1];
-
-                        msg_name_line = false;
-                    } else if line.starts_with("========") {
-                        msg_name_line = true;
-                    }
-                }
                 // TODO: DynamicMsg is very slow to decode. I believe this is because of it's nested-ness.
                 // I think that flattening the msg would significantly increase the throughput (also allow to operate directly on bytes)
 

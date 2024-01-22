@@ -105,9 +105,9 @@ impl Bag {
                 // let chunk_data = ChunkData::try_from_bytes_with_con_time_check(chunk_bytes, &cons, start_ts, end_ts)?;
 
                 for message_data in chunk_data.message_datas {
-                    println!("Message Data conn: {} Data len: {:?}", message_data._conn, &message_data.data.map(|d| d.len()));
+                    // println!("Message Data conn: {} Data len: {:?}", message_data._conn, &message_data.data.map(|d| d.len()));
                     // WARN: Slow!
-                    // let msg = dyn_msg_map.get(&message_data._conn).unwrap().decode(message_data.data.unwrap().reader())?;
+                    let msg = dyn_msg_map.get(&message_data._conn).unwrap().decode(message_data.data.unwrap().reader())?;
                 }
 
                 // println!("ChunkData: {}", chunk_bytes.len());

@@ -4,7 +4,7 @@ use anyhow::Result;
 use regex::{Regex, RegexBuilder};
 use lazy_static::lazy_static;
 
-use crate::msg::Msg;
+use crate::msg::MsgType;
 
 lazy_static! {
     static ref MSG_SPLIT_REGEX: Regex = RegexBuilder::new("^=+$")
@@ -23,32 +23,35 @@ pub(crate) enum MsgLine {
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct FieldLine {
-    field_type: String,
-    field_name: String,
+    pub(crate) field_type: String,
+    pub(crate) field_name: String,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct ConstLine {
-    const_type: String,
-    const_name: String,
-    const_value: String,
+    pub(crate) const_type: String,
+    pub(crate) const_name: String,
+    pub(crate) const_value: String,
 }
 
 
-pub fn parse_con_msg_def(msg_def_cache: &mut HashMap<String, &Msg>, msg_defs: &str) -> Result<()> {
+pub fn parse_con_msg_def(root_msg_type: &str, msg_def_cache: &mut HashMap<String, MsgType>, msg_defs: &str) -> Result<MsgType> {
     for msg_def in MSG_SPLIT_REGEX.split(msg_defs).collect::<Vec<_>>().into_iter().rev().map(parse_msg_def) {
         let (msg_name, parsed_lines) = msg_def?;
 
-        if let Some(msg_name) = msg_name {
-            if let Some(_) = msg_def_cache.get(msg_name) {
-                continue;
-            };
-            // Else parse field and crate a message
+        let msg_name = msg_name.unwrap_or(root_msg_type);
 
-        }
+        if let Some(_) = msg_def_cache.get(msg_name) {
+            continue;
+        };
+        let namespace = msg_name.split_once('/').unwrap().0;
+        // Else parse field and crate a message
+        let msg = MsgType::try_from_parsed_lines(msg_def_cache, &parsed_lines, namespace)?;
+
+        msg_def_cache.insert(msg_name.to_string(), msg.clone());
     }
 
-    Ok(())
+    msg_def_cache.get(root_msg_type).map(|m| m.clone()).ok_or(anyhow::anyhow!("Could not find root msg type."))
 }
 
 fn parse_msg_def(msg_def: &str) -> Result<(Option<&str>, Vec<MsgLine>)> {
@@ -65,7 +68,6 @@ fn parse_msg_def(msg_def: &str) -> Result<(Option<&str>, Vec<MsgLine>)> {
     let (msg_name, clean_lines) = if let Some(header_line) = clean_lines.first() {
         if header_line.starts_with("MSG: ") {
             let msg_name = header_line.split(' ').last().unwrap();
-            println!("msg_name: {msg_name}");
             (Some(msg_name), &clean_lines[1..])
         } else {
             (None, clean_lines.as_slice())

@@ -74,16 +74,15 @@ impl Bag {
 
     pub async fn test(&self) -> Result<()> {
         // Check message parsing
-        let dyn_msg_map = self.borrow_meta().await.borrow_connection_to_id_message();
+        let msg_map = self.borrow_meta().await.borrow_connection_to_id_message();
 
         // Bag bounds 1630169773_000_000_000u64 to 1630169785_000_000_000u64
         let start_ts = 1630169779_000_000_000u64;
         let end_ts = 1630169782_000_000_000u64;
 
-        let topics = vec!["/ros_talon/current_position".to_string()];
         let chunk_positions = self.borrow_meta().await.filter_chunks(None, Some(start_ts), Some(end_ts))?;
 
-        let cons: HashSet<_> = self.borrow_meta().await.topic_to_connections.get(&topics[0]).unwrap().clone().iter().map(|c| c._conn).collect();
+        // println!("Connections: {:?}", self.borrow_meta().await.topic_to_connections.keys());
 
         println!("Chunk positions: {} / {}", chunk_positions.len(), self.borrow_meta().await.chunk_infos.len());
 
@@ -102,12 +101,11 @@ impl Bag {
                 let chunk_bytes = c.decompress(self.cursor.read_chunk(data_pos).await?)?;
 
                 let chunk_data = ChunkData::try_from_bytes_with_time_check(chunk_bytes, start_ts, end_ts)?;
-                // let chunk_data = ChunkData::try_from_bytes_with_con_time_check(chunk_bytes, &cons, start_ts, end_ts)?;
 
                 for message_data in chunk_data.message_datas {
                     // println!("Message Data conn: {} Data len: {:?}", message_data._conn, &message_data.data.map(|d| d.len()));
                     // WARN: Slow!
-                    // let msg = dyn_msg_map.get(&message_data._conn).unwrap().decode(message_data.data.unwrap().reader())?;
+                    // let msg = msg_map.get(&message_data._conn).unwrap().decode(message_data.data.unwrap().reader())?;
                 }
 
                 // println!("ChunkData: {}", chunk_bytes.len());

@@ -1,7 +1,7 @@
 use anyhow::{self, Result};
 use byteorder::{ByteOrder, LE};
 use bytes::Bytes;
-use ros_msg::msg::MsgType;
+use ros_msg::msg_type::MsgType;
 
 use std::{collections::HashMap, cell::OnceCell};
 

@@ -3,6 +3,7 @@ use bytes::Buf;
 
 use anyhow::{self, Result};
 use object_store::{ObjectMeta, ObjectStore};
+use ros_msg::traits::ParseBytes as _;
 use tokio::sync::OnceCell;
 
 use crate::{meta::Meta, records::{record::{Record, parse_header_bytes, self}, bag_header::BagHeader, connection::Connection, chunk::ChunkData}, cursor::Cursor, constants::{VERSION_LEN, VERSION_STRING}, error::RosError};
@@ -77,17 +78,20 @@ impl Bag {
         let msg_map = self.borrow_meta().await.borrow_connection_to_id_message();
 
         // Bag bounds 1630169773_000_000_000u64 to 1630169785_000_000_000u64
-        let start_ts = 1630169779_000_000_000u64;
-        let end_ts = 1630169782_000_000_000u64;
+        let start_ts = 1705518463_000_000_000u64;
+        let end_ts = 1705518559_000_000_000u64;
 
-        let chunk_positions = self.borrow_meta().await.filter_chunks(None, Some(start_ts), Some(end_ts))?;
+        let meta = self.borrow_meta().await;
+        let chunk_positions = meta.filter_chunks(None, Some(start_ts), Some(end_ts))?;
 
         // println!("Connections: {:?}", self.borrow_meta().await.topic_to_connections.keys());
 
-        println!("Chunk positions: {} / {}", chunk_positions.len(), self.borrow_meta().await.chunk_infos.len());
+        println!("Chunk positions: {} / {}", chunk_positions.len(), meta.chunk_infos.len());
+
 
 
         let bar = indicatif::ProgressBar::new(chunk_positions.len() as u64);
+        let con_to_msg = meta.borrow_connection_to_id_message();
         for pos in chunk_positions {
             bar.inc(1);
             let pos = pos as usize;
@@ -103,6 +107,7 @@ impl Bag {
                 let chunk_data = ChunkData::try_from_bytes_with_time_check(chunk_bytes, start_ts, end_ts)?;
 
                 for message_data in chunk_data.message_datas {
+                    let msg = con_to_msg.get(&message_data._conn).unwrap().try_parse(&message_data.data.unwrap());
                     // println!("Message Data conn: {} Data len: {:?}", message_data._conn, &message_data.data.map(|d| d.len()));
                     // WARN: Slow!
                     // let msg = msg_map.get(&message_data._conn).unwrap().decode(message_data.data.unwrap().reader())?;

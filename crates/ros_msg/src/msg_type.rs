@@ -51,10 +51,10 @@ impl ParseBytes for MsgType {
     fn try_parse(&self, bytes: &[u8]) -> Result<(usize, FieldValue)> {
         let mut cur_idx = 0usize;
         for (field_name, field) in self.fields.iter().sorted_by_key(|(_, f)| f.idx) {
-            println!("Field: {field:?}");
+            // println!("Field: {field:?}");
             let (field_len, field_val) = field.try_parse(&bytes[cur_idx..])?;
             cur_idx += field_len;
-            println!("Field val: {field_val:?}");
+            // println!("Field val: {field_val:?}");
         }
 
         Ok((cur_idx, FieldValue::Msg(MsgValue { })))

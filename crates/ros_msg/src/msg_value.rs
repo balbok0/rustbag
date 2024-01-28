@@ -1,7 +1,21 @@
+use std::collections::HashMap;
+
+use crate::const_field::ConstField;
+
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MsgValue {
+    constants: HashMap<String, ConstField>,
+    fields: HashMap<String, FieldValue>,
+}
 
+impl MsgValue {
+    pub(crate) fn new(constants: HashMap<String, ConstField>, fields: HashMap<String, FieldValue>) -> Self {
+        MsgValue {
+            constants,
+            fields
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

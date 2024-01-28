@@ -74,9 +74,6 @@ impl Bag {
     }
 
     pub async fn test(&self, start: Option<u64>, end: Option<u64>) -> Result<()> {
-        // Check message parsing
-        let msg_map = self.borrow_meta().await.borrow_connection_to_id_message();
-
         let meta = self.borrow_meta().await;
         let start = start.map(|v| meta.start_time() + v * 1_000_000_000).unwrap_or_else(|| meta.start_time());
         let end = end.map(|v| meta.end_time() + v * 1_000_000_000).unwrap_or_else(|| meta.end_time());

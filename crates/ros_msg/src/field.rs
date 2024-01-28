@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use bytes::Bytes;
 use crate::{data_type::DataType, msg_type::MsgType, msg_value::FieldValue, parse_msg::FieldLine, traits::{MaybeSized, ParseBytes}};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,6 +11,15 @@ pub struct Field {
 }
 
 impl Field {
+    #[cfg(test)]
+    pub(crate) fn new(field_name: String, field_type: DataType, idx: usize) -> Self {
+        Field {
+            field_name: field_name.into(),
+            field_type,
+            idx,
+        }
+    }
+
     pub(crate) fn try_from_field_line(msg_def_cache: &mut HashMap<String, MsgType>, value: &FieldLine, namespace: &str, idx: usize) -> Result<Self> {
         let field_type = DataType::try_from_string(msg_def_cache,&value.field_type, namespace)?;
         Ok(Field {

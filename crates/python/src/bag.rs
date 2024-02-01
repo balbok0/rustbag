@@ -5,25 +5,27 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 #[pyclass]
-struct Bag {
+pub struct Bag {
     inner: RustBag,
 }
 
+#[pymethods]
 impl Bag {
-    // #[pyo3(signature = (bag_uri, storage_options = None))]
+    #[new]
+    pub fn new<'p>(
+        py: Python<'p>,
+        bag_uri: &str,
+    ) -> Self {
 
-    // #[pyfunction]
-    // pub fn new<'p>(
-    //     py: Python<'p>,
-    //     bag_uri: &str,
-    //     storage_options: Option<HashMap<String, String>>,
-    // ) -> PyResult<&'p PyAny> {
-
-    //     pyo3_asyncio::tokio::future_into_py(py, async move {
-    //         let inner = RustBag::try_from_path(bag_uri).await?;
-    //         Ok(Bag {
-    //             inner
-    //         })
-    //     })
-    // }
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let inner = RustBag::try_from_path(bag_uri).await.unwrap();
+                Bag {
+                    inner
+                }
+            })
+    }
 }

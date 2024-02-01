@@ -2,7 +2,7 @@ use anyhow::{self, Result};
 use byteorder::{ByteOrder, LE};
 use bytes::Bytes;
 
-use std::{collections::HashMap, cell::OnceCell};
+use std::collections::HashMap;
 use crate::{error::RosError, utils::read_ros_time};
 
 #[derive(Debug, PartialEq, Clone)]

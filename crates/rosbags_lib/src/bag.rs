@@ -1,9 +1,8 @@
-use std::{sync::Arc, path::Path, collections::{HashMap, HashSet}, borrow::Borrow};
-use bytes::Buf;
+use std::{sync::Arc, path::Path, collections::HashMap};
 
 use anyhow::{self, Result};
 use object_store::{ObjectMeta, ObjectStore};
-use ros_msg::traits::ParseBytes as _;
+use ros_msg::{msg_value::FieldValue, traits::ParseBytes as _};
 use tokio::sync::OnceCell;
 
 use crate::{meta::Meta, records::{record::{Record, parse_header_bytes, self}, bag_header::BagHeader, connection::Connection, chunk::ChunkData}, cursor::Cursor, constants::{VERSION_LEN, VERSION_STRING}, error::RosError};
@@ -78,17 +77,12 @@ impl Bag {
         meta.unwrap()
     }
 
-    pub async fn test(&self, start: Option<u64>, end: Option<u64>) -> Result<()> {
+    pub async fn read_messages(&self, topics: Option<Vec<String>>, start: Option<u64>, end: Option<u64>) -> Result<()> {
         let meta = self.borrow_meta().await;
         let start = start.map(|v| meta.start_time() + v * 1_000_000_000).unwrap_or_else(|| meta.start_time());
         let end = end.map(|v| meta.end_time() + v * 1_000_000_000).unwrap_or_else(|| meta.end_time());
 
         let chunk_positions = meta.filter_chunks(None, Some(start), Some(end))?;
-
-        // println!("Connections: {:?}", self.borrow_meta().await.topic_to_connections.keys());
-
-        println!("Chunk positions: {} / {}", chunk_positions.len(), meta.chunk_infos.len());
-
 
 
         let bar = indicatif::ProgressBar::new(chunk_positions.len() as u64);
@@ -99,7 +93,7 @@ impl Bag {
             let header_bytes = self.cursor.read_chunk(pos).await.unwrap();
             let header_len = header_bytes.len();
             let data_pos = pos + 4 + header_len;
-            let record_with_header = parse_header_bytes(data_pos, header_bytes).unwrap();
+            let record_with_header = parse_header_bytes(data_pos, header_bytes)?;
 
 
             if let record::Record::Chunk(c) = record_with_header {
@@ -114,7 +108,6 @@ impl Bag {
                     // let msg = msg_map.get(&message_data._conn).unwrap().decode(message_data.data.unwrap().reader())?;
                 }
 
-                // println!("ChunkData: {}", chunk_bytes.len());
             } else {
                 return Err(RosError::InvalidRecord("Unexpected record. Expected Chunk").into());
             }
@@ -139,5 +132,20 @@ async fn read_bag_header(cursor: &Cursor) -> Result<BagHeader> {
         Ok(bh)
     } else {
         Err(RosError::InvalidHeader("Invalid Bag Header record type.").into())
+    }
+}
+
+
+// Helper struct for iteration of msgs
+pub struct BagMessageIterator<'b> {
+    inner: &'b Bag,
+}
+
+impl<'b> Iterator for BagMessageIterator<'b> {
+    type Item = FieldValue;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // self.inner.
+        todo!()
     }
 }

@@ -25,7 +25,7 @@ impl Meta {
         for (record, data_bytes) in RecordBytesIterator::new(bytes) {
             match record {
                 Record::Connection(con) => {
-                    let con_data = con.data.get_or_init(|| ConnectionData::try_new(data_bytes).unwrap());
+                    let _con_data = con.data.get_or_init(|| ConnectionData::try_new(data_bytes).unwrap());
                     topic_to_connections.entry(con._topic.clone()).or_insert(Vec::new()).push(con);
                 },
                 Record::ChunkInfo(chunk_info) => {

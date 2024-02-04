@@ -5,7 +5,11 @@ use itertools::Itertools;
 use crate::{const_field::ConstField, field::Field, msg_value::{FieldValue, MsgValue}, parse_msg::MsgLine, traits::{MaybeSized, ParseBytes}};
 use anyhow::Result;
 
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "python", pyclass)]
 pub struct MsgType {
     constants: HashMap<String, ConstField>,
     fields: HashMap<String, Field>,

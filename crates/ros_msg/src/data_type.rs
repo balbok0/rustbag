@@ -6,6 +6,9 @@ use byteorder::{ByteOrder, LE};
 
 use crate::{error::RosError, msg_type::MsgType, msg_value::FieldValue, traits::{MaybeSized, ParseBytes}};
 
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+
 // Region: Constants
 const BOOL_KEY: &str = "bool";
 const INT8_KEY: &str = "int8";
@@ -27,6 +30,7 @@ const DURATION_KEY: &str = "duration";
 // Region: Definitions
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "python", pyclass)]
 pub enum PrimitiveDataType {
     /// Represents `bool`.
     Bool,
@@ -553,7 +557,7 @@ mod tests {
 
     mod data_type_tests {
         use super::*;
-        use crate::{field::Field, msg_type::MsgType, msg_value::MsgValue};
+        use crate::{field::Field, msg_type::MsgType};
 
         fn setup_msg_def_cache() -> HashMap<String, MsgType> {
             let mut msg_def_cache = HashMap::new();

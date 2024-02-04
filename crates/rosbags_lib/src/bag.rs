@@ -78,7 +78,7 @@ impl Bag {
         meta.unwrap()
     }
 
-    pub async fn read_messages(&'_ self, topics: Option<Vec<String>>, start: Option<u64>, end: Option<u64>, verbose: bool) -> BagMessageIterator {
+    pub async fn read_messages(&self, topics: Option<Vec<String>>, start: Option<u64>, end: Option<u64>, verbose: bool) -> BagMessageIterator {
         let meta = self.borrow_meta().await;
         let start = start.map(|v| meta.start_time() + v * 1_000_000_000).unwrap_or_else(|| meta.start_time());
         let end = end.map(|v| meta.end_time() + v * 1_000_000_000).unwrap_or_else(|| meta.end_time());
@@ -152,7 +152,7 @@ impl BagMessageIterator {
             msg_index: 0,
             chunk_data: None,
             progress_bar,
-            last_timestamp: start,
+            last_timestamp: start / 1_000_000_000,
         }
     }
 }
@@ -164,14 +164,12 @@ impl Iterator for BagMessageIterator {
         let bag = &self.inner;
 
         if self.chunk_data.as_ref().map(|cd| cd.message_datas.len() <= self.msg_index).unwrap_or(true) {
-            println!("in if");
             if self.chunk_index >= self.chunk_positions.len() {
                 return None;
             }
             self.msg_index = 0;
 
             self.chunk_data = self.runtime.block_on(async {
-                println!("in async a chunk");
                 let pos = self.chunk_positions[self.chunk_index];
                 let pos = pos as usize;
                 let header_bytes = bag.cursor.read_chunk(pos).await.unwrap();
@@ -181,12 +179,10 @@ impl Iterator for BagMessageIterator {
 
 
                 let chunk_data = if let record::Record::Chunk(c) = record_with_header {
-                    println!("Decompressing");
                     let chunk_bytes = c.decompress(bag.cursor.read_chunk(data_pos).await.ok()?).ok()?;
 
                     ChunkData::try_from_bytes_with_time_check(chunk_bytes, self.start, self.end).ok()
                 } else {
-                    println!("record not a chunk");
                     return None;
                 };
 
@@ -200,10 +196,11 @@ impl Iterator for BagMessageIterator {
         let msg_data = self.chunk_data.as_ref().unwrap().message_datas.get(self.msg_index)?;
         self.msg_index += 1;
 
+        let cur_ts = msg_data._time.max(self.last_timestamp) / 1_000_000_000;
         if let Some(pbar) = &self.progress_bar {
-            pbar.inc(msg_data._time - self.last_timestamp);
+            pbar.inc(cur_ts - self.last_timestamp);
         }
-        self.last_timestamp = msg_data._time;
+        self.last_timestamp = cur_ts;
         let msg_val = match self.con_to_msg.get(&msg_data._conn).unwrap().try_parse(&msg_data.data.clone().unwrap()) {
             Ok((_, FieldValue::Msg(msg))) => Some(msg),
             _ => None,

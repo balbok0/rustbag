@@ -1,4 +1,4 @@
-use std::{cell::OnceCell, collections::HashMap};
+use std::{sync::OnceLock, collections::HashMap};
 use itertools::Itertools;
 
 
@@ -14,7 +14,7 @@ pub struct MsgType {
     constants: HashMap<String, ConstField>,
     fields: HashMap<String, Field>,
 
-    known_size: OnceCell<Option<usize>>,
+    known_size: OnceLock<Option<usize>>,
 }
 
 impl MsgType {
@@ -33,7 +33,7 @@ impl MsgType {
             }
         }
 
-        Ok(MsgType { constants, fields, known_size: OnceCell::new() })
+        Ok(MsgType { constants, fields, known_size: OnceLock::new() })
     }
 }
 
@@ -45,7 +45,7 @@ impl MsgType {
         known_size: Option<usize>,
         init_known_size: bool,
     ) -> Self {
-        let ks = OnceCell::new();
+        let ks = OnceLock::new();
         if init_known_size {
             ks.get_or_init(|| known_size);
         }

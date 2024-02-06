@@ -2,7 +2,7 @@ use anyhow::{self, Result};
 use byteorder::{ByteOrder, LE};
 use bytes::Bytes;
 
-use std::{cell::OnceCell, collections::{HashMap, HashSet}};
+use std::{sync::OnceLock, collections::{HashMap, HashSet}};
 use std::fmt::Display;
 
 use crate::{error::RosError, utils::read_ros_time, cursor::BytesCursor};
@@ -16,7 +16,7 @@ pub(crate) struct ChunkInfo {
     pub(crate) _end_time: u64,
     pub(crate) _count: u32,
 
-    pub(crate) data: OnceCell<Vec<ChunkInfoDataEntry>>,
+    pub(crate) data: OnceLock<Vec<ChunkInfoDataEntry>>,
 }
 
 impl ChunkInfo {
@@ -34,7 +34,7 @@ impl ChunkInfo {
             _start_time,
             _end_time,
             _count,
-            data: OnceCell::new(),
+            data: OnceLock::new(),
         })
     }
 

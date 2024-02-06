@@ -1,13 +1,15 @@
-use std::{sync::Arc, path::Path, collections::HashMap};
+use std::{collections::{BinaryHeap, HashMap, VecDeque}, path::Path, sync::Arc, task::Poll};
 
 use anyhow::{self, Result};
-use indicatif::ProgressBar;
+use futures::FutureExt;
 use object_store::{ObjectMeta, ObjectStore};
 use ros_msg::{msg_type::MsgType, msg_value::{FieldValue, MsgValue}, traits::ParseBytes as _};
-use tokio::{runtime::Runtime, sync::OnceCell};
+use tokio::{runtime::Runtime, sync::{mpsc::{Receiver, Sender}, oneshot::Receiver as OneShotReceiver, OnceCell}, task::JoinSet};
 
-use crate::{meta::Meta, records::{record::{Record, parse_header_bytes, self}, bag_header::BagHeader, connection::Connection, chunk::ChunkData}, cursor::Cursor, constants::{VERSION_LEN, VERSION_STRING}, error::RosError};
+use crate::{meta::Meta, records::{bag_header::BagHeader, chunk::ChunkData, chunk_info::ChunkInfo, connection::Connection, record::{Record, parse_header_bytes, self}}, cursor::Cursor, constants::{VERSION_LEN, VERSION_STRING}, error::RosError};
 use url::Url;
+
+type MsgIterValue = (u64, u32, MsgValue);
 
 #[derive(Debug, Clone)]
 pub struct Bag {
@@ -78,16 +80,20 @@ impl Bag {
         meta.unwrap()
     }
 
-    pub async fn read_messages(&self, topics: Option<Vec<String>>, start: Option<u64>, end: Option<u64>, verbose: bool) -> BagMessageIterator {
+    pub async fn read_messages(&self, topics: Option<Vec<String>>, start: Option<u64>, end: Option<u64>) -> BagMessageIterator {
         let meta = self.borrow_meta().await;
         let start = start.map(|v| meta.start_time() + v * 1_000_000_000).unwrap_or_else(|| meta.start_time());
         let end = end.map(|v| meta.end_time() + v * 1_000_000_000).unwrap_or_else(|| meta.end_time());
 
-        let chunk_positions = meta.filter_chunks(topics.as_ref(), Some(start), Some(end)).unwrap();
+        let chunk_infos = meta.filter_chunks(topics.as_ref(), Some(start), Some(end)).unwrap();
 
-        let iter = BagMessageIterator::new(self.clone(), meta.clone(), start, end, chunk_positions, verbose);
+        let iter = BagMessageIterator::new(self.clone(), meta.clone(), start, end, chunk_infos.into_iter().cloned().collect());
 
         iter
+    }
+
+    pub async fn num_messages(&self) -> u64 {
+        self.borrow_meta().await.num_messages()
     }
 }
 
@@ -111,101 +117,209 @@ async fn read_bag_header(cursor: &Cursor) -> Result<BagHeader> {
 
 // Helper struct for iteration of msgs
 pub struct BagMessageIterator {
-    inner: Bag,
+    runtime: Runtime,
+    message_reader: Receiver<Option<Vec<MsgIterValue>>>,
+    msg_queue: VecDeque<MsgIterValue>,
+}
+
+pub(super) async fn start_parse_msgs(bag: Bag, chunk_infos: Vec<ChunkInfo>, con_to_msg: HashMap<u32, MsgType>, start: u64, end: u64, message_sender: Sender<Option<Vec<MsgIterValue>>>) {
+    let (tx, chunk_result_recv) = tokio::sync::mpsc::channel(100);
+    let (done_tx, done_recv) = tokio::sync::oneshot::channel();
+
+    let sorted_fut = tokio::spawn(async move { order_parsed_messaged(chunk_result_recv, done_recv, message_sender).await.unwrap();  });
+
+    // Chunk parsing
+    let mut futures = JoinSet::new();
+
+    for chunk_idx in 0..chunk_infos.len() {
+        if futures.len() >= 10 {
+            // Wait for some future to finish
+            match futures.join_next().await {
+                Some(v) => {
+                    // FIXME: Do not fail silently
+                    if v.is_err() {
+                    }
+                }
+                None => {
+                    // FIXME: Do not fail silently
+                    return;
+                }
+            }
+        }
+
+        let chunk_info = &chunk_infos[chunk_idx];
+        let chunk_pos = chunk_info._chunk_pos as usize;
+        // TODO: Logic for waiting
+
+        let chunk_con_to_msg = HashMap::from_iter(chunk_info.data.get().unwrap().iter().map(|c| (c._conn, con_to_msg.get(&c._conn).unwrap().clone())));
+
+        let cur_tx = tx.clone();
+        let chunk_bag = bag.clone();
+
+        futures.spawn(async move {
+            parse_chunk(
+                cur_tx,
+                chunk_bag,
+                chunk_idx,
+                chunk_pos,
+                start,
+                end,
+                chunk_con_to_msg,
+            ).await.unwrap();
+        });
+    }
+
+    // Make sure all parsing is done
+    while !futures.is_empty() {
+        futures.join_next().await;
+    }
+
+    sorted_fut.await.unwrap();
+
+    done_tx.send(true).unwrap();
+}
+
+
+async fn order_parsed_messaged(mut chunk_result_recv: Receiver<(usize, Vec<MsgIterValue>)>, mut done_recv: OneShotReceiver<bool>, sorted_result_sender: Sender<Option<Vec<MsgIterValue>>>) -> Result<()> {
+    let waker = futures::task::noop_waker_ref();
+    let mut cx = std::task::Context::from_waker(waker);
+    let mut next_idx = 0;
+    let mut last_printed_chunk_idx = 0;
+
+    let mut parsed_ooo_chunks = BinaryHeap::new();
+
+
+    loop {
+        // Check if we are done
+        match done_recv.poll_unpin(&mut cx) {
+            Poll::Ready(Ok(true)) | Poll::Ready(Err(_)) => {
+                sorted_result_sender.try_send(None).unwrap();
+                break;
+            },
+            _ => {},
+        }
+
+        // If not check for any futures
+        match chunk_result_recv.try_recv() {
+            Ok((chunk_idx, msg_vals)) => {
+                if chunk_idx == next_idx {
+                    next_idx += 1;
+                    sorted_result_sender.try_send(Some(msg_vals)).unwrap();
+                } else {
+                    parsed_ooo_chunks.push((-(chunk_idx as i64), msg_vals))
+                }
+            },
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {},
+            Err(e) => {
+                // FIXME: Should break I think
+                panic!("{:?}", e);
+            }
+        }
+
+        // Lastly peek at OOO chunks to see if they should be added
+        loop {
+            match parsed_ooo_chunks.peek() {
+                Some((chunk_idx, _)) => {
+                    // DEBUG
+                    if &last_printed_chunk_idx != chunk_idx {
+                        last_printed_chunk_idx = *chunk_idx;
+                    }
+
+                    if -chunk_idx as usize == next_idx {
+                        let (_, msg_vals) = parsed_ooo_chunks.pop().unwrap();
+                        next_idx += 1;
+                        sorted_result_sender.try_send(Some(msg_vals)).unwrap();
+                    } else {
+                        break;
+                    }
+                },
+                None => break,
+            }
+        }
+    }
+
+    Ok(())
+
+}
+
+async fn parse_chunk(
+    tx: Sender<(usize, Vec<MsgIterValue>)>,
+    bag: Bag,
+    chunk_idx: usize,
+    pos: usize,
     start: u64,
     end: u64,
-    chunk_positions: Vec<u64>,
     con_to_msg: HashMap<u32, MsgType>,
+) -> Result<()> {
+    let header_bytes = bag.cursor.read_chunk(pos).await.unwrap();
+    let header_len = header_bytes.len();
+    let data_pos = pos + 4 + header_len;
+    let record_with_header = parse_header_bytes(data_pos, header_bytes)?;
 
-    runtime: Runtime,
+    let chunk_data = if let record::Record::Chunk(c) = record_with_header {
+        let chunk_bytes = c.decompress(bag.cursor.read_chunk(data_pos).await.unwrap()).unwrap();
 
-    chunk_index: usize,
-    msg_index: usize,
-    chunk_data: Option<ChunkData>,
+        ChunkData::try_from_bytes_with_time_check(chunk_bytes, start, end).unwrap()
+    } else {
+        return Err(anyhow::Error::new(RosError::InvalidRecord("Bad Record type detected. Expected Chunk.")));
+    };
 
-    progress_bar: Option<ProgressBar>,
-    last_timestamp: u64,
+    let mut message_vals = Vec::with_capacity(chunk_data.message_datas.len());
+    for md in chunk_data.message_datas {
+        let msg_val = match con_to_msg.get(&md._conn).unwrap().try_parse(&md.data.unwrap()) {
+            Ok((_, FieldValue::Msg(msg))) => msg,
+            _ => {
+                return Err(anyhow::Error::new(RosError::InvalidRecord("MessageData did not contain a parsable Value")));
+            }
+        };
+        message_vals.push((md._time, md._conn, msg_val));
+    }
+
+
+    tx.send((chunk_idx, message_vals)).await.unwrap();
+
+    Ok(())
 }
 
 impl BagMessageIterator {
-    fn new(bag: Bag, meta: Meta, start: u64, end: u64, chunk_positions: Vec<u64>, verbose: bool) -> Self {
+    fn new(bag: Bag, meta: Meta, start: u64, end: u64, chunk_infos: Vec<ChunkInfo>) -> Self {
         let con_to_msg = meta.borrow_connection_to_id_message();
-        let progress_bar = if verbose {
-            Some(indicatif::ProgressBar::new((end - start) / 1_000_000_000))
-        } else {
-            None
-        };
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
+            .worker_threads(8)
             .build()
             .unwrap();
 
-        BagMessageIterator {
-            inner: bag,
-            start,
-            end,
-            chunk_positions,
-            con_to_msg: con_to_msg.clone(),
+        let (message_sender, message_reader) = tokio::sync::mpsc::channel(1000);
+        runtime.spawn(start_parse_msgs(bag, chunk_infos, con_to_msg.clone(), start, end, message_sender));
+
+        let s = BagMessageIterator {
             runtime,
-            chunk_index: 0,
-            msg_index: 0,
-            chunk_data: None,
-            progress_bar,
-            last_timestamp: start / 1_000_000_000,
-        }
+            message_reader,
+            msg_queue: VecDeque::new(),
+        };
+
+        s
     }
+
 }
 
 impl Iterator for BagMessageIterator {
-    type Item = MsgValue;
+    type Item = MsgIterValue;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let bag = &self.inner;
-
-        if self.chunk_data.as_ref().map(|cd| cd.message_datas.len() <= self.msg_index).unwrap_or(true) {
-            if self.chunk_index >= self.chunk_positions.len() {
-                return None;
+        match self.msg_queue.pop_front() {
+            Some(msg) => Some(msg),
+            None => {
+                match self.message_reader.blocking_recv() {
+                    Some(Some(msgs)) => {
+                        self.msg_queue.append(&mut msgs.into());
+                        Some(self.msg_queue.pop_front().unwrap())
+                    }
+                    Some(None) | None => None,
+                }
             }
-            self.msg_index = 0;
-
-            self.chunk_data = self.runtime.block_on(async {
-                let pos = self.chunk_positions[self.chunk_index];
-                let pos = pos as usize;
-                let header_bytes = bag.cursor.read_chunk(pos).await.unwrap();
-                let header_len = header_bytes.len();
-                let data_pos = pos + 4 + header_len;
-                let record_with_header = parse_header_bytes(data_pos, header_bytes).ok()?;
-
-
-                let chunk_data = if let record::Record::Chunk(c) = record_with_header {
-                    let chunk_bytes = c.decompress(bag.cursor.read_chunk(data_pos).await.ok()?).ok()?;
-
-                    ChunkData::try_from_bytes_with_time_check(chunk_bytes, self.start, self.end).ok()
-                } else {
-                    return None;
-                };
-
-                chunk_data
-            });
-
-            self.chunk_index += 1;
-
         }
-
-        let msg_data = self.chunk_data.as_ref().unwrap().message_datas.get(self.msg_index)?;
-        self.msg_index += 1;
-
-        let cur_ts = msg_data._time.max(self.last_timestamp) / 1_000_000_000;
-        if let Some(pbar) = &self.progress_bar {
-            pbar.inc(cur_ts - self.last_timestamp);
-        }
-        self.last_timestamp = cur_ts;
-        let msg_val = match self.con_to_msg.get(&msg_data._conn).unwrap().try_parse(&msg_data.data.clone().unwrap()) {
-            Ok((_, FieldValue::Msg(msg))) => Some(msg),
-            _ => None,
-        };
-
-        msg_val
     }
 }

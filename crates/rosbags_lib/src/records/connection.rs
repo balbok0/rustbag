@@ -3,7 +3,7 @@ use byteorder::{ByteOrder, LE};
 use bytes::Bytes;
 use ros_msg::msg_type::MsgType;
 
-use std::{collections::HashMap, cell::OnceCell};
+use std::{collections::HashMap, sync::OnceLock};
 
 use crate::{error::RosError, utils::parse_bytes_into_field_map};
 
@@ -14,7 +14,7 @@ pub struct Connection {
     pub _conn: u32,
     pub _topic: String,
     // Data
-    pub data: OnceCell<ConnectionData>,
+    pub data: OnceLock<ConnectionData>,
 }
 
 impl Connection {
@@ -26,7 +26,7 @@ impl Connection {
             data_pos,
             _conn,
             _topic,
-            data: OnceCell::new(),
+            data: OnceLock::new(),
         })
     }
 }

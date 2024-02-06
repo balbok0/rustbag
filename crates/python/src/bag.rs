@@ -4,6 +4,8 @@ use pyo3::prelude::*;
 
 use tokio::runtime::Runtime;
 
+type MsgIterValue = (u64, u32, MsgValue);
+
 #[pyclass]
 pub struct Bag {
     inner: RustBag,
@@ -37,7 +39,7 @@ impl Bag {
     pub fn read_messages(slf: PyRef<'_, Self>, topics: Option<Vec<String>>, start: Option<u64>, end: Option<u64>) -> PyResult<Py<PythonMessageIter>> {
         let bag_iter = slf.runtime.block_on(
             async {
-                slf.inner.read_messages(topics, start, end, false).await
+                slf.inner.read_messages(topics, start, end).await
             }
         );
         let python_iter = PythonMessageIter {
@@ -59,7 +61,7 @@ impl PythonMessageIter {
         slf
     }
 
-    pub fn __next__(mut slf: PyRefMut<'_, Self>) -> Option<MsgValue> {
+    pub fn __next__(mut slf: PyRefMut<'_, Self>) -> Option<MsgIterValue> {
         slf.inner.next()
     }
 }

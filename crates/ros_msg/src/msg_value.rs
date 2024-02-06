@@ -70,6 +70,22 @@ impl MsgValue {
     // }
 }
 
+impl Eq for MsgValue {
+
+}
+
+impl PartialOrd for MsgValue {
+    fn partial_cmp(&self, _other: &Self) -> Option<std::cmp::Ordering> {
+        Some(std::cmp::Ordering::Equal)
+    }
+}
+
+impl Ord for MsgValue {
+    fn cmp(&self, _other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldValue {
     // Primitives

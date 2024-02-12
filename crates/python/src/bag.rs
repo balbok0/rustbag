@@ -47,6 +47,14 @@ impl Bag {
         };
         Ok(Py::new(slf.py(), python_iter)?)
     }
+
+    pub fn num_messages(slf: PyRef<'_, Self>) -> u64 {
+        slf.runtime.block_on(
+            async {
+                slf.inner.num_messages().await
+            }
+        )
+    }
 }
 
 

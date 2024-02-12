@@ -1,10 +1,9 @@
-use std::{collections::{BinaryHeap, HashMap, VecDeque}, path::Path, sync::Arc, task::Poll};
+use std::{collections::{BinaryHeap, HashMap, VecDeque}, path::Path, sync::Arc};
 
 use anyhow::{self, Result};
-use futures::FutureExt;
 use object_store::{ObjectMeta, ObjectStore};
 use ros_msg::{msg_type::MsgType, msg_value::{FieldValue, MsgValue}, traits::ParseBytes as _};
-use tokio::{runtime::Runtime, sync::{mpsc::{Receiver, Sender}, oneshot::Receiver as OneShotReceiver, OnceCell}, task::JoinSet};
+use tokio::{runtime::Runtime, sync::{mpsc::{Sender, Receiver, UnboundedReceiver, UnboundedSender}, OnceCell}, task::JoinSet};
 
 use crate::{meta::Meta, records::{bag_header::BagHeader, chunk::ChunkData, chunk_info::ChunkInfo, connection::Connection, record::{Record, parse_header_bytes, self}}, cursor::Cursor, constants::{VERSION_LEN, VERSION_STRING}, error::RosError};
 use url::Url;
@@ -117,22 +116,21 @@ async fn read_bag_header(cursor: &Cursor) -> Result<BagHeader> {
 
 // Helper struct for iteration of msgs
 pub struct BagMessageIterator {
-    runtime: Runtime,
-    message_reader: Receiver<Option<Vec<MsgIterValue>>>,
+    _runtime: Runtime,
+    message_reader: UnboundedReceiver<Option<Vec<MsgIterValue>>>,
     msg_queue: VecDeque<MsgIterValue>,
 }
 
-pub(super) async fn start_parse_msgs(bag: Bag, chunk_infos: Vec<ChunkInfo>, con_to_msg: HashMap<u32, MsgType>, start: u64, end: u64, message_sender: Sender<Option<Vec<MsgIterValue>>>) {
+pub(super) async fn start_parse_msgs(bag: Bag, chunk_infos: Vec<ChunkInfo>, con_to_msg: HashMap<u32, MsgType>, start: u64, end: u64, message_sender: UnboundedSender<Option<Vec<MsgIterValue>>>) {
     let (tx, chunk_result_recv) = tokio::sync::mpsc::channel(100);
-    let (done_tx, done_recv) = tokio::sync::oneshot::channel();
 
-    let sorted_fut = tokio::spawn(async move { order_parsed_messaged(chunk_result_recv, done_recv, message_sender).await.unwrap();  });
+    let sorted_fut = tokio::spawn(async move { order_parsed_messaged(chunk_result_recv, message_sender).await.unwrap();  });
 
     // Chunk parsing
     let mut futures = JoinSet::new();
 
     for chunk_idx in 0..chunk_infos.len() {
-        if futures.len() >= 10 {
+        if futures.len() >= 100 {
             // Wait for some future to finish
             match futures.join_next().await {
                 Some(v) => {
@@ -168,67 +166,52 @@ pub(super) async fn start_parse_msgs(bag: Bag, chunk_infos: Vec<ChunkInfo>, con_
             ).await.unwrap();
         });
     }
+    // println!("Num chunks parsed: {}", chunk_infos.len());
 
     // Make sure all parsing is done
     while !futures.is_empty() {
         futures.join_next().await;
     }
 
-    sorted_fut.await.unwrap();
+    // Drop tx
+    std::mem::drop(tx);
 
-    done_tx.send(true).unwrap();
+    sorted_fut.await.unwrap();
 }
 
 
-async fn order_parsed_messaged(mut chunk_result_recv: Receiver<(usize, Vec<MsgIterValue>)>, mut done_recv: OneShotReceiver<bool>, sorted_result_sender: Sender<Option<Vec<MsgIterValue>>>) -> Result<()> {
-    let waker = futures::task::noop_waker_ref();
-    let mut cx = std::task::Context::from_waker(waker);
+async fn order_parsed_messaged(mut chunk_result_recv: Receiver<(usize, Vec<MsgIterValue>)>, sorted_result_sender: UnboundedSender<Option<Vec<MsgIterValue>>>) -> Result<()> {
     let mut next_idx = 0;
-    let mut last_printed_chunk_idx = 0;
 
     let mut parsed_ooo_chunks = BinaryHeap::new();
 
 
     loop {
-        // Check if we are done
-        match done_recv.poll_unpin(&mut cx) {
-            Poll::Ready(Ok(true)) | Poll::Ready(Err(_)) => {
-                sorted_result_sender.try_send(None).unwrap();
-                break;
-            },
-            _ => {},
-        }
-
         // If not check for any futures
         match chunk_result_recv.try_recv() {
             Ok((chunk_idx, msg_vals)) => {
                 if chunk_idx == next_idx {
                     next_idx += 1;
-                    sorted_result_sender.try_send(Some(msg_vals)).unwrap();
+                    sorted_result_sender.send(Some(msg_vals)).unwrap();
                 } else {
                     parsed_ooo_chunks.push((-(chunk_idx as i64), msg_vals))
                 }
             },
             Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {},
-            Err(e) => {
-                // FIXME: Should break I think
-                panic!("{:?}", e);
-            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                sorted_result_sender.send(None).unwrap();
+                break;
+            },
         }
 
         // Lastly peek at OOO chunks to see if they should be added
         loop {
             match parsed_ooo_chunks.peek() {
                 Some((chunk_idx, _)) => {
-                    // DEBUG
-                    if &last_printed_chunk_idx != chunk_idx {
-                        last_printed_chunk_idx = *chunk_idx;
-                    }
-
                     if -chunk_idx as usize == next_idx {
                         let (_, msg_vals) = parsed_ooo_chunks.pop().unwrap();
                         next_idx += 1;
-                        sorted_result_sender.try_send(Some(msg_vals)).unwrap();
+                        sorted_result_sender.send(Some(msg_vals)).unwrap();
                     } else {
                         break;
                     }
@@ -287,15 +270,15 @@ impl BagMessageIterator {
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-            .worker_threads(8)
+            .worker_threads(16)
             .build()
             .unwrap();
 
-        let (message_sender, message_reader) = tokio::sync::mpsc::channel(1000);
+        let (message_sender, message_reader) = tokio::sync::mpsc::unbounded_channel();
         runtime.spawn(start_parse_msgs(bag, chunk_infos, con_to_msg.clone(), start, end, message_sender));
 
         let s = BagMessageIterator {
-            runtime,
+            _runtime: runtime,
             message_reader,
             msg_queue: VecDeque::new(),
         };
@@ -316,7 +299,7 @@ impl Iterator for BagMessageIterator {
                     Some(Some(msgs)) => {
                         self.msg_queue.append(&mut msgs.into());
                         Some(self.msg_queue.pop_front().unwrap())
-                    }
+                    },
                     Some(None) | None => None,
                 }
             }

@@ -63,7 +63,7 @@ pub enum PrimitiveDataType {
 }
 
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DataType {
     Primitive(PrimitiveDataType),
     PrimitiveVector(PrimitiveDataType),
@@ -174,6 +174,31 @@ impl ParseBytes for PrimitiveDataType {
                 let sec = LE::read_u32(&bytes[..4]) as u64;
                 let nano_sec = LE::read_u32(&bytes[4..8]) as u64;
                 (8, FieldValue::Duration(sec * 1_000_000_000 + nano_sec))
+            },
+        })
+    }
+}
+
+impl PrimitiveDataType {
+    pub(crate) fn try_from_string(&self, string: String) -> Result<FieldValue> {
+        Ok(match self {
+            PrimitiveDataType::Bool => FieldValue::Bool(string == "true".to_string()),
+            PrimitiveDataType::I8 => FieldValue::I8(string.parse()?),
+            PrimitiveDataType::I16 => FieldValue::I16(string.parse()?),
+            PrimitiveDataType::I32 => FieldValue::I32(string.parse()?),
+            PrimitiveDataType::I64 => FieldValue::I64(string.parse()?),
+            PrimitiveDataType::U8 => FieldValue::U8(string.parse()?),
+            PrimitiveDataType::U16 => FieldValue::U16(string.parse()?),
+            PrimitiveDataType::U32 => FieldValue::U32(string.parse()?),
+            PrimitiveDataType::U64 => FieldValue::U64(string.parse()?),
+            PrimitiveDataType::F32 => FieldValue::F32(string.parse()?),
+            PrimitiveDataType::F64 => FieldValue::F64(string.parse()?),
+            PrimitiveDataType::String => FieldValue::String(string),
+            PrimitiveDataType::Time => {
+                return Err(RosError::InvalidType.into());
+            },
+            PrimitiveDataType::Duration => {
+                return Err(RosError::InvalidType.into());
             },
         })
     }

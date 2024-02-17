@@ -8,7 +8,7 @@ use anyhow::Result;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "python", pyclass)]
 pub struct MsgType {
     constants: HashMap<String, ConstField>,

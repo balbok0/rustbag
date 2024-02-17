@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use crate::{data_type::DataType, msg_type::MsgType, msg_value::FieldValue, parse_msg::FieldLine, traits::{MaybeSized, ParseBytes}};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Field {
     field_name: String,
     field_type: DataType,
@@ -40,13 +40,6 @@ impl PartialOrd for Field {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         // Ordering is only on index
         self.idx.partial_cmp(&other.idx)
-    }
-}
-
-impl Ord for Field {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Ordering is only on index
-        self.idx.cmp(&other.idx)
     }
 }
 

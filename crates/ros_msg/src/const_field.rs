@@ -1,12 +1,12 @@
-use crate::{data_type::PrimitiveDataType, parse_msg::ConstLine, traits::MaybeSized};
+use crate::{data_type::PrimitiveDataType, parse_msg::ConstLine, traits::MaybeSized, msg_value::FieldValue};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConstField {
     // TODO: Change to datatype
     const_type: PrimitiveDataType,
     const_name: String,
     // TODO: Change to value enum
-    const_value: String,
+    const_value: FieldValue,
 }
 
 impl MaybeSized for ConstField {
@@ -23,7 +23,7 @@ impl TryFrom<&ConstLine> for ConstField {
         Ok(ConstField {
             const_type,
             const_name: value.const_name.clone(),
-            const_value: value.const_value.clone(),
+            const_value: const_type.try_from_string(value.const_value.clone())?,
         })
     }
 }

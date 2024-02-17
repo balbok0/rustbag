@@ -1,11 +1,38 @@
-use std::{collections::{BinaryHeap, HashMap, VecDeque}, path::Path, sync::Arc};
+use std::{
+    collections::{BinaryHeap, HashMap, VecDeque},
+    path::Path,
+    sync::Arc,
+};
 
 use anyhow::{self, Result};
 use object_store::{ObjectMeta, ObjectStore};
-use ros_msg::{msg_type::MsgType, msg_value::{FieldValue, MsgValue}, traits::ParseBytes as _};
-use tokio::{runtime::Runtime, sync::{mpsc::{Sender, Receiver, UnboundedReceiver, UnboundedSender}, OnceCell}, task::JoinSet};
+use ros_msg::{
+    msg_type::MsgType,
+    msg_value::{FieldValue, MsgValue},
+    traits::ParseBytes as _,
+};
+use tokio::{
+    runtime::Runtime,
+    sync::{
+        mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender},
+        OnceCell,
+    },
+    task::JoinSet,
+};
 
-use crate::{meta::Meta, records::{bag_header::BagHeader, chunk::ChunkData, chunk_info::ChunkInfo, connection::Connection, record::{Record, parse_header_bytes, self}}, cursor::Cursor, constants::{VERSION_LEN, VERSION_STRING}, error::RosError};
+use crate::{
+    constants::{VERSION_LEN, VERSION_STRING},
+    cursor::Cursor,
+    error::RosError,
+    meta::Meta,
+    records::{
+        bag_header::BagHeader,
+        chunk::ChunkData,
+        chunk_info::ChunkInfo,
+        connection::Connection,
+        record::{self, parse_header_bytes, Record},
+    },
+};
 use url::Url;
 
 type MsgIterValue = (u64, u32, MsgValue);
@@ -17,9 +44,11 @@ pub struct Bag {
     cursor: Cursor,
 }
 
-
 impl Bag {
-    pub fn try_new_from_object_store_meta(object_store: Arc<Box<dyn ObjectStore>>, object_meta: ObjectMeta) -> Result<Self> {
+    pub fn try_new_from_object_store_meta(
+        object_store: Arc<Box<dyn ObjectStore>>,
+        object_meta: ObjectMeta,
+    ) -> Result<Self> {
         let cursor = Cursor::new(object_store, object_meta);
 
         Ok(Bag {
@@ -59,18 +88,23 @@ impl Bag {
     }
 
     async fn borrow_bag_header(&self) -> Result<&BagHeader> {
-        self.bag_header.get_or_try_init(|| async {
-            read_bag_header(&self.cursor).await
-        }).await
+        self.bag_header
+            .get_or_try_init(|| async { read_bag_header(&self.cursor).await })
+            .await
     }
 
     async fn borrow_meta(&self) -> &Meta {
-        let meta = self.bag_meta.get_or_try_init(
-            || async {
+        let meta = self
+            .bag_meta
+            .get_or_try_init(|| async {
                 let index_pos = self.borrow_bag_header().await?._index_pos as usize;
-                Meta::try_new_from_bytes(self.cursor.read_bytes(index_pos, self.cursor.len() - index_pos).await?)
-            }
-        ).await;
+                Meta::try_new_from_bytes(
+                    self.cursor
+                        .read_bytes(index_pos, self.cursor.len() - index_pos)
+                        .await?,
+                )
+            })
+            .await;
 
         if meta.is_err() {
             panic!("Could not read Bag metadata {:#?}", meta)
@@ -79,14 +113,31 @@ impl Bag {
         meta.unwrap()
     }
 
-    pub async fn read_messages(&self, topics: Option<Vec<String>>, start: Option<u64>, end: Option<u64>) -> BagMessageIterator {
+    pub async fn read_messages(
+        &self,
+        topics: Option<Vec<String>>,
+        start: Option<u64>,
+        end: Option<u64>,
+    ) -> BagMessageIterator {
         let meta = self.borrow_meta().await;
-        let start = start.map(|v| meta.start_time() + v * 1_000_000_000).unwrap_or_else(|| meta.start_time());
-        let end = end.map(|v| meta.end_time() + v * 1_000_000_000).unwrap_or_else(|| meta.end_time());
+        let start = start
+            .map(|v| meta.start_time() + v * 1_000_000_000)
+            .unwrap_or_else(|| meta.start_time());
+        let end = end
+            .map(|v| meta.end_time() + v * 1_000_000_000)
+            .unwrap_or_else(|| meta.end_time());
 
-        let chunk_infos = meta.filter_chunks(topics.as_ref(), Some(start), Some(end)).unwrap();
+        let chunk_infos = meta
+            .filter_chunks(topics.as_ref(), Some(start), Some(end))
+            .unwrap();
 
-        let iter = BagMessageIterator::new(self.clone(), meta.clone(), start, end, chunk_infos.into_iter().cloned().collect());
+        let iter = BagMessageIterator::new(
+            self.clone(),
+            meta.clone(),
+            start,
+            end,
+            chunk_infos.into_iter().cloned().collect(),
+        );
 
         iter
     }
@@ -95,7 +146,6 @@ impl Bag {
         self.borrow_meta().await.num_messages()
     }
 }
-
 
 // Helper Function
 async fn read_bag_header(cursor: &Cursor) -> Result<BagHeader> {
@@ -113,7 +163,6 @@ async fn read_bag_header(cursor: &Cursor) -> Result<BagHeader> {
     }
 }
 
-
 // Helper struct for iteration of msgs
 pub struct BagMessageIterator {
     _runtime: Runtime,
@@ -121,10 +170,21 @@ pub struct BagMessageIterator {
     msg_queue: VecDeque<MsgIterValue>,
 }
 
-pub(super) async fn start_parse_msgs(bag: Bag, chunk_infos: Vec<ChunkInfo>, con_to_msg: HashMap<u32, MsgType>, start: u64, end: u64, message_sender: UnboundedSender<Option<Vec<MsgIterValue>>>) {
+pub(super) async fn start_parse_msgs(
+    bag: Bag,
+    chunk_infos: Vec<ChunkInfo>,
+    con_to_msg: HashMap<u32, MsgType>,
+    start: u64,
+    end: u64,
+    message_sender: UnboundedSender<Option<Vec<MsgIterValue>>>,
+) {
     let (tx, chunk_result_recv) = tokio::sync::mpsc::channel(100);
 
-    let sorted_fut = tokio::spawn(async move { order_parsed_messaged(chunk_result_recv, message_sender).await.unwrap();  });
+    let sorted_fut = tokio::spawn(async move {
+        order_parsed_messaged(chunk_result_recv, message_sender)
+            .await
+            .unwrap();
+    });
 
     // Chunk parsing
     let mut futures = JoinSet::new();
@@ -135,8 +195,7 @@ pub(super) async fn start_parse_msgs(bag: Bag, chunk_infos: Vec<ChunkInfo>, con_
             match futures.join_next().await {
                 Some(v) => {
                     // FIXME: Do not fail silently
-                    if v.is_err() {
-                    }
+                    if v.is_err() {}
                 }
                 None => {
                     // FIXME: Do not fail silently
@@ -149,7 +208,14 @@ pub(super) async fn start_parse_msgs(bag: Bag, chunk_infos: Vec<ChunkInfo>, con_
         let chunk_pos = chunk_info._chunk_pos as usize;
         // TODO: Logic for waiting
 
-        let chunk_con_to_msg = HashMap::from_iter(chunk_info.data.get().unwrap().iter().map(|c| (c._conn, con_to_msg.get(&c._conn).unwrap().clone())));
+        let chunk_con_to_msg = HashMap::from_iter(
+            chunk_info
+                .data
+                .get()
+                .unwrap()
+                .iter()
+                .map(|c| (c._conn, con_to_msg.get(&c._conn).unwrap().clone())),
+        );
 
         let cur_tx = tx.clone();
         let chunk_bag = bag.clone();
@@ -163,7 +229,9 @@ pub(super) async fn start_parse_msgs(bag: Bag, chunk_infos: Vec<ChunkInfo>, con_
                 start,
                 end,
                 chunk_con_to_msg,
-            ).await.unwrap();
+            )
+            .await
+            .unwrap();
         });
     }
     // println!("Num chunks parsed: {}", chunk_infos.len());
@@ -179,12 +247,13 @@ pub(super) async fn start_parse_msgs(bag: Bag, chunk_infos: Vec<ChunkInfo>, con_
     sorted_fut.await.unwrap();
 }
 
-
-async fn order_parsed_messaged(mut chunk_result_recv: Receiver<(usize, Vec<MsgIterValue>)>, sorted_result_sender: UnboundedSender<Option<Vec<MsgIterValue>>>) -> Result<()> {
+async fn order_parsed_messaged(
+    mut chunk_result_recv: Receiver<(usize, Vec<MsgIterValue>)>,
+    sorted_result_sender: UnboundedSender<Option<Vec<MsgIterValue>>>,
+) -> Result<()> {
     let mut next_idx = 0;
 
     let mut parsed_ooo_chunks = BinaryHeap::new();
-
 
     loop {
         // If not check for any futures
@@ -196,12 +265,12 @@ async fn order_parsed_messaged(mut chunk_result_recv: Receiver<(usize, Vec<MsgIt
                 } else {
                     parsed_ooo_chunks.push((-(chunk_idx as i64), msg_vals))
                 }
-            },
-            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {},
+            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}
             Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
                 sorted_result_sender.send(None).unwrap();
                 break;
-            },
+            }
         }
 
         // Lastly peek at OOO chunks to see if they should be added
@@ -215,14 +284,13 @@ async fn order_parsed_messaged(mut chunk_result_recv: Receiver<(usize, Vec<MsgIt
                     } else {
                         break;
                     }
-                },
+                }
                 None => break,
             }
         }
     }
 
     Ok(())
-
 }
 
 async fn parse_chunk(
@@ -240,24 +308,33 @@ async fn parse_chunk(
     let record_with_header = parse_header_bytes(data_pos, header_bytes)?;
 
     let chunk_data = if let record::Record::Chunk(c) = record_with_header {
-        let chunk_bytes = c.decompress(bag.cursor.read_chunk(data_pos).await.unwrap()).unwrap();
+        let chunk_bytes = c
+            .decompress(bag.cursor.read_chunk(data_pos).await.unwrap())
+            .unwrap();
 
         ChunkData::try_from_bytes_with_time_check(chunk_bytes, start, end).unwrap()
     } else {
-        return Err(anyhow::Error::new(RosError::InvalidRecord("Bad Record type detected. Expected Chunk.")));
+        return Err(anyhow::Error::new(RosError::InvalidRecord(
+            "Bad Record type detected. Expected Chunk.",
+        )));
     };
 
     let mut message_vals = Vec::with_capacity(chunk_data.message_datas.len());
     for md in chunk_data.message_datas {
-        let msg_val = match con_to_msg.get(&md._conn).unwrap().try_parse(&md.data.unwrap()) {
+        let msg_val = match con_to_msg
+            .get(&md._conn)
+            .unwrap()
+            .try_parse(&md.data.unwrap())
+        {
             Ok((_, FieldValue::Msg(msg))) => msg,
             _ => {
-                return Err(anyhow::Error::new(RosError::InvalidRecord("MessageData did not contain a parsable Value")));
+                return Err(anyhow::Error::new(RosError::InvalidRecord(
+                    "MessageData did not contain a parsable Value",
+                )));
             }
         };
         message_vals.push((md._time, md._conn, msg_val));
     }
-
 
     tx.send((chunk_idx, message_vals)).await.unwrap();
 
@@ -269,13 +346,19 @@ impl BagMessageIterator {
         let con_to_msg = meta.borrow_connection_to_id_message();
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .worker_threads(16)
+            .worker_threads(8)
             .build()
             .unwrap();
 
         let (message_sender, message_reader) = tokio::sync::mpsc::unbounded_channel();
-        runtime.spawn(start_parse_msgs(bag, chunk_infos, con_to_msg.clone(), start, end, message_sender));
+        runtime.spawn(start_parse_msgs(
+            bag,
+            chunk_infos,
+            con_to_msg.clone(),
+            start,
+            end,
+            message_sender,
+        ));
 
         let s = BagMessageIterator {
             _runtime: runtime,
@@ -285,7 +368,6 @@ impl BagMessageIterator {
 
         s
     }
-
 }
 
 impl Iterator for BagMessageIterator {
@@ -294,15 +376,13 @@ impl Iterator for BagMessageIterator {
     fn next(&mut self) -> Option<Self::Item> {
         match self.msg_queue.pop_front() {
             Some(msg) => Some(msg),
-            None => {
-                match self.message_reader.blocking_recv() {
-                    Some(Some(msgs)) => {
-                        self.msg_queue.append(&mut msgs.into());
-                        Some(self.msg_queue.pop_front().unwrap())
-                    },
-                    Some(None) | None => None,
+            None => match self.message_reader.blocking_recv() {
+                Some(Some(msgs)) => {
+                    self.msg_queue.append(&mut msgs.into());
+                    Some(self.msg_queue.pop_front().unwrap())
                 }
-            }
+                Some(None) | None => None,
+            },
         }
     }
 }

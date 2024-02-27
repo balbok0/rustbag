@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{error::RosError, iterators::RecordBytesIterator, records::record::Record};
 
-use super::{message_data::MessageData, connection::Connection};
+use super::message_data::MessageData;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Compression {

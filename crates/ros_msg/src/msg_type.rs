@@ -72,10 +72,8 @@ impl ParseBytes for MsgType {
         let mut cur_idx = 0usize;
         let mut field_vals = HashMap::new();
         for (field_name, field) in self.fields.iter().sorted_by_key(|(_, f)| f.idx) {
-            // println!("Field: {field:?}");
             let (field_len, field_val) = field.try_parse(&bytes[cur_idx..])?;
             cur_idx += field_len;
-            // println!("Field val: {field_val:?}");
             field_vals.insert(field_name.clone(), field_val);
         }
 

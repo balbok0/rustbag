@@ -1,10 +1,10 @@
-use std::{collections::{HashMap, HashSet}, cell::OnceCell};
+use std::{cell::OnceCell, collections::{HashMap, HashSet}};
 
 use bytes::Bytes;
 use anyhow::Result;
 use ros_msg::{self, msg_type::MsgType};
 
-use crate::{iterators::RecordBytesIterator, records::{record::Record, connection::{Connection, ConnectionData}, chunk_info::ChunkInfo, chunk}, error::RosError};
+use crate::{iterators::RecordBytesIterator, records::{record::Record, connection::{Connection, ConnectionData}, chunk_info::ChunkInfo}, error::RosError};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Meta {
@@ -26,13 +26,14 @@ impl Meta {
             match record {
                 Record::Connection(con) => {
                     let con_data = con.data.get_or_init(|| ConnectionData::try_new(data_bytes).unwrap());
-                    // println!("\n\nTopic: {} message definition:\n{}\n", con._topic, con_data._message_definition);
                     topic_to_connections.entry(con._topic.clone()).or_insert(Vec::new()).push(con);
                 },
                 Record::ChunkInfo(chunk_info) => {
                     chunk_info.data.get_or_init(|| ChunkInfo::new_chunk_info_data_entries_from_bytes(&chunk_info, data_bytes).unwrap());
+
                     start_ts = chunk_info._start_time.min(start_ts);
                     end_ts = chunk_info._end_time.max(end_ts);
+
                     chunk_infos.push(chunk_info);
                 },
                 _ => {
@@ -53,7 +54,7 @@ impl Meta {
         })
     }
 
-    pub(crate) fn filter_chunks(&self, topics: Option<&Vec<String>>, start_time: Option<u64>, end_time: Option<u64>) -> Result<Vec<u32>> {
+    pub(crate) fn filter_chunks(&self, topics: Option<&Vec<String>>, start_time: Option<u64>, end_time: Option<u64>) -> Result<Vec<u64>> {
         let connections: Option<HashSet<u32>> = topics.map(|topics|
             topics.iter()
                 // NOTE: Line below silently ignores not matching topics
@@ -63,7 +64,7 @@ impl Meta {
         );
 
         // Filter chunks
-        let chunk_infos: Vec<u32> = self.chunk_infos.iter().filter_map(|chunk_info| {
+        let chunk_infos: Vec<_> = self.chunk_infos.iter().filter_map(|chunk_info| {
             if let Some(cons) = &connections {
                 if !chunk_info.contains_connections(cons) {
                     return None;
@@ -105,9 +106,6 @@ impl Meta {
                 let con_data = con.data.get().unwrap(); // Note it exists, since we create it in new
 
                 let msg = con_data.parse_def(&mut msg_def_cache).unwrap();
-                // println!("\nMessage Definition: {}\n\n\n", con_data._message_definition);
-                // let msg = DynamicMsg::new(con_data._type.as_str().into(), con_data._message_definition.as_str()).unwrap();
-                // LazyFlatDynamicMsg::try_from(&msg).unwrap();
 
                 // TODO: DynamicMsg is very slow to decode. I believe this is because of it's nested-ness.
                 // I think that flattening the msg would significantly increase the throughput (also allow to operate directly on bytes)

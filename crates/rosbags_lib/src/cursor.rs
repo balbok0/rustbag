@@ -86,19 +86,7 @@ impl BytesCursor {
         self.read_bytes(n)
     }
 
-    pub fn next_chunk(&mut self) -> Result<()> {
-        let n = self.read_u32()? as usize;
-        self.pos += n;
-        Ok(())
-    }
-
     pub fn read_u32(&mut self) -> Result<u32> {
         Ok(LE::read_u32(&self.read_bytes(4)?))
-    }
-
-    pub fn read_time(&mut self) -> Result<u64> {
-        let s = self.read_u32()? as u64;
-        let ns = self.read_u32()? as u64;
-        Ok(1_000_000_000 * s + ns)
     }
 }

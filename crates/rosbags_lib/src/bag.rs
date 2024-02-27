@@ -73,16 +73,15 @@ impl Bag {
         meta.unwrap()
     }
 
-    pub async fn test(&self) -> Result<()> {
+    pub async fn test(&self, start: Option<u64>, end: Option<u64>) -> Result<()> {
         // Check message parsing
         let msg_map = self.borrow_meta().await.borrow_connection_to_id_message();
 
-        // Bag bounds 1630169773_000_000_000u64 to 1630169785_000_000_000u64
-        let start_ts = 1705518463_000_000_000u64;
-        let end_ts = 1705518559_000_000_000u64;
-
         let meta = self.borrow_meta().await;
-        let chunk_positions = meta.filter_chunks(None, Some(start_ts), Some(end_ts))?;
+        let start = start.map(|v| meta.start_time() + v * 1_000_000_000).unwrap_or_else(|| meta.start_time());
+        let end = end.map(|v| meta.end_time() + v * 1_000_000_000).unwrap_or_else(|| meta.end_time());
+
+        let chunk_positions = meta.filter_chunks(None, Some(start), Some(end))?;
 
         // println!("Connections: {:?}", self.borrow_meta().await.topic_to_connections.keys());
 
@@ -104,7 +103,7 @@ impl Bag {
             if let record::Record::Chunk(c) = record_with_header {
                 let chunk_bytes = c.decompress(self.cursor.read_chunk(data_pos).await?)?;
 
-                let chunk_data = ChunkData::try_from_bytes_with_time_check(chunk_bytes, start_ts, end_ts)?;
+                let chunk_data = ChunkData::try_from_bytes_with_time_check(chunk_bytes, start, end)?;
 
                 for message_data in chunk_data.message_datas {
                     let msg = con_to_msg.get(&message_data._conn).unwrap().try_parse(&message_data.data.unwrap());

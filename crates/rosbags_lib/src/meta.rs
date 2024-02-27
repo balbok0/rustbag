@@ -1,8 +1,7 @@
-use std::{collections::{HashMap, HashSet}, cell::OnceCell, borrow::Borrow};
+use std::{collections::{HashMap, HashSet}, cell::OnceCell};
 
 use bytes::Bytes;
 use anyhow::Result;
-use ros_message::DynamicMsg;
 use ros_msg::{self, msg_type::MsgType};
 
 use crate::{iterators::RecordBytesIterator, records::{record::Record, connection::{Connection, ConnectionData}, chunk_info::ChunkInfo, chunk}, error::RosError};
@@ -12,12 +11,16 @@ pub(crate) struct Meta {
     pub(crate) topic_to_connections: HashMap<String, Vec<Connection>>,
     connection_id_to_message: OnceCell<HashMap<u32, MsgType>>,
     pub(crate) chunk_infos: Vec<ChunkInfo>,
+    start_ts: u64,
+    end_ts: u64
 }
 
 impl Meta {
     pub(crate) fn try_new_from_bytes(bytes: Bytes) -> Result<Self> {
         let mut topic_to_connections = HashMap::new();
         let mut chunk_infos = Vec::new();
+        let mut start_ts = u64::MAX;
+        let mut end_ts = u64::MIN;
 
         for (record, data_bytes) in RecordBytesIterator::new(bytes) {
             match record {
@@ -28,6 +31,8 @@ impl Meta {
                 },
                 Record::ChunkInfo(chunk_info) => {
                     chunk_info.data.get_or_init(|| ChunkInfo::new_chunk_info_data_entries_from_bytes(&chunk_info, data_bytes).unwrap());
+                    start_ts = chunk_info._start_time.min(start_ts);
+                    end_ts = chunk_info._end_time.max(end_ts);
                     chunk_infos.push(chunk_info);
                 },
                 _ => {
@@ -43,6 +48,8 @@ impl Meta {
             topic_to_connections,
             connection_id_to_message: OnceCell::new(),
             chunk_infos,
+            start_ts,
+            end_ts,
         })
     }
 
@@ -110,5 +117,13 @@ impl Meta {
 
             connection_id_to_message
         })
+    }
+
+    pub fn start_time(&self) -> u64 {
+        self.start_ts
+    }
+
+    pub fn end_time(&self) -> u64 {
+        self.end_ts
     }
 }

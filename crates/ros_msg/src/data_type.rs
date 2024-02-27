@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::{anyhow, Result};
-use bytes::Bytes;
+use itertools::Itertools;
 use byteorder::{ByteOrder, LE};
 
 use crate::{msg_type::MsgType, msg_value::FieldValue, traits::{MaybeSized, ParseBytes}};
@@ -255,6 +255,112 @@ impl MaybeSized for DataType {
     }
 }
 
+fn parse_primitive_array(bytes: &[u8], array_len: usize, elem_type: &PrimitiveDataType) -> (usize, FieldValue) {
+    match elem_type {
+        PrimitiveDataType::Bool => {
+            (array_len, FieldValue::BoolArray(unsafe { bytes[..array_len].align_to::<bool>().1 }.into()))
+        },
+        PrimitiveDataType::I8 => {
+            (array_len, FieldValue::I8Array(unsafe { bytes[..array_len].align_to::<i8>().1 }.into()))
+        },
+        PrimitiveDataType::I16 => {
+            (2 * array_len, FieldValue::I16Array(unsafe {
+                let slice_ptr = bytes[..2 * array_len].as_ptr();
+                std::slice::from_raw_parts::<i16>(slice_ptr as *const i16, array_len)
+            }.into()))
+        },
+        PrimitiveDataType::I32 => {
+            (4 * array_len, FieldValue::I32Array(unsafe {
+                let slice_ptr = bytes[..4 * array_len].as_ptr();
+                std::slice::from_raw_parts::<i32>(slice_ptr as *const i32, array_len)
+            }.into()))
+        },
+        PrimitiveDataType::I64 => {
+            (8 * array_len, FieldValue::I64Array(unsafe {
+                let slice_ptr = bytes[..8 * array_len].as_ptr();
+                std::slice::from_raw_parts::<i64>(slice_ptr as *const i64, array_len)
+            }.into()))
+        },
+        PrimitiveDataType::U8 => {
+            (array_len, FieldValue::U8Array(bytes[..array_len].into()))
+        },
+        PrimitiveDataType::U16 => {
+            (2 * array_len, FieldValue::U16Array(unsafe {
+                let slice_ptr = bytes[..2 * array_len].as_ptr();
+                std::slice::from_raw_parts::<u16>(slice_ptr as *const u16, array_len)
+            }.into()))
+        },
+        PrimitiveDataType::U32 => {
+            (4 * array_len, FieldValue::U32Array(unsafe {
+                let slice_ptr = bytes[..4 * array_len].as_ptr();
+                std::slice::from_raw_parts::<u32>(slice_ptr as *const u32, array_len)
+            }.into()))
+        },
+        PrimitiveDataType::U64 => {
+            (8 * array_len, FieldValue::U64Array(unsafe {
+                let slice_ptr = bytes[..8 * array_len].as_ptr();
+                std::slice::from_raw_parts::<u64>(slice_ptr as *const u64, array_len)
+            }.into()))
+        },
+        PrimitiveDataType::F32 => {
+            (4 * array_len, FieldValue::F32Array(unsafe {
+                let slice_ptr = bytes[..4 * array_len].as_ptr();
+                std::slice::from_raw_parts::<f32>(slice_ptr as *const f32, array_len)
+            }.into()))
+        },
+        PrimitiveDataType::F64 => {
+            (8 * array_len, FieldValue::F64Array(unsafe {
+                let slice_ptr = bytes[..4 * array_len].as_ptr();
+                std::slice::from_raw_parts::<f64>(slice_ptr as *const f64, array_len)
+            }.into()))
+        },
+        PrimitiveDataType::String => {
+            // This is unfortunately slow
+            // First get all of lengths
+            let mut str_pos_len = Vec::with_capacity(array_len);
+            let mut cur_pos = 0usize;
+            for _ in 0..array_len {
+                let str_len = LE::read_u32(&bytes[cur_pos..cur_pos + 4]) as usize;
+                str_pos_len.push((cur_pos + 4, str_len));
+                cur_pos += str_len + 4;
+            }
+
+            (cur_pos, FieldValue::StringArray(str_pos_len.into_iter().map(|(str_pos, str_len)| {
+                String::from_utf8_lossy(&bytes[str_pos..str_pos+str_len]).to_string()
+            }).collect()))
+        },
+        PrimitiveDataType::Time => {
+            let u32_view = unsafe {
+                let slice_ptr = bytes[..2 * 4 * array_len].as_ptr();
+                std::slice::from_raw_parts::<u32>(slice_ptr as *const u32, array_len)
+            };
+            (2 * 4 * array_len, FieldValue::TimeArray(u32_view.iter().tuples().map(|(sec, nano_sec)| *sec as u64 * 1_000_000_000 + *nano_sec as u64).collect()))
+        },
+        PrimitiveDataType::Duration => {
+            let u32_view = unsafe {
+                let slice_ptr = bytes[..2 * 4 * array_len].as_ptr();
+                std::slice::from_raw_parts::<u32>(slice_ptr as *const u32, array_len)
+            };
+            (2 * 4 * array_len, FieldValue::TimeArray(u32_view.iter().tuples().map(|(sec, nano_sec)| *sec as u64 * 1_000_000_000 + *nano_sec as u64).collect()))
+        },
+    }
+}
+
+fn parse_complex_array(bytes: &[u8], array_len: usize, msg: &MsgType) -> Result<(usize, FieldValue)> {
+    let mut vec = Vec::with_capacity(array_len);
+    let mut offset = 0usize;
+    for _ in 0..array_len {
+        let (msg_len, msg_val) = msg.try_parse(&bytes[offset..])?;
+        if let FieldValue::Msg(msg_value) = msg_val {
+            vec.push(msg_value);
+        } else {
+            return Err(anyhow!("Bad parsing of message"));
+        }
+        offset += msg_len;
+    }
+    Ok((offset, FieldValue::MsgArray(vec)))
+}
+
 impl ParseBytes for DataType {
     fn try_parse(&self, bytes: &[u8]) -> Result<(usize, FieldValue)> {
         Ok(match self {
@@ -263,103 +369,23 @@ impl ParseBytes for DataType {
             },
             DataType::PrimitiveVector(elem_type) => {
                 let vec_len = LE::read_u32(&bytes[..4]) as usize;
-                match elem_type {
-                    PrimitiveDataType::Bool => {
-                        (4 + vec_len, FieldValue::BoolArray(unsafe { bytes[4..4 + vec_len].align_to::<bool>().1 }.into()))
-                    },
-                    PrimitiveDataType::I8 => {
-                        (4 + vec_len, FieldValue::I8Array(unsafe { bytes[4..4 + vec_len].align_to::<i8>().1 }.into()))
-                    },
-                    PrimitiveDataType::I16 => {
-                        (4 + 2 * vec_len, FieldValue::I16Array(unsafe {
-                            let slice_ptr = bytes[4..4 + 2 * vec_len].as_ptr();
-                            std::slice::from_raw_parts::<i16>(slice_ptr as *const i16, vec_len)
-                        }.into()))
-                    },
-                    PrimitiveDataType::I32 => {
-                        (4 + 4 * vec_len, FieldValue::I32Array(unsafe {
-                            let slice_ptr = bytes[4..4 + 4 * vec_len].as_ptr();
-                            std::slice::from_raw_parts::<i32>(slice_ptr as *const i32, vec_len)
-                        }.into()))
-                    },
-                    PrimitiveDataType::I64 => {
-                        (4 + 8 * vec_len, FieldValue::I64Array(unsafe {
-                            let slice_ptr = bytes[4..4 + 8 * vec_len].as_ptr();
-                            std::slice::from_raw_parts::<i64>(slice_ptr as *const i64, vec_len)
-                        }.into()))
-                    },
-                    PrimitiveDataType::U8 => {
-                        (4 + vec_len, FieldValue::U8Array(bytes[4..4 + vec_len].into()))
-                    },
-                    PrimitiveDataType::U16 => {
-                        (4 + 2 * vec_len, FieldValue::U16Array(unsafe {
-                            let slice_ptr = bytes[4..4 + 2 * vec_len].as_ptr();
-                            std::slice::from_raw_parts::<u16>(slice_ptr as *const u16, vec_len)
-                        }.into()))
-                    },
-                    PrimitiveDataType::U32 => {
-                        (4 + 4 * vec_len, FieldValue::U32Array(unsafe {
-                            let slice_ptr = bytes[4..4 + 4 * vec_len].as_ptr();
-                            std::slice::from_raw_parts::<u32>(slice_ptr as *const u32, vec_len)
-                        }.into()))
-                    },
-                    PrimitiveDataType::U64 => {
-                        (4 + 8 * vec_len, FieldValue::U64Array(unsafe {
-                            let slice_ptr = bytes[4..4 + 8 * vec_len].as_ptr();
-                            std::slice::from_raw_parts::<u64>(slice_ptr as *const u64, vec_len)
-                        }.into()))
-                    },
-                    PrimitiveDataType::F32 => {
-                        (4 + 4 * vec_len, FieldValue::F32Array(unsafe {
-                            let slice_ptr = bytes[4..4 + 4 * vec_len].as_ptr();
-                            std::slice::from_raw_parts::<f32>(slice_ptr as *const f32, vec_len)
-                        }.into()))
-                    },
-                    PrimitiveDataType::F64 => {
-                        (4 + 8 * vec_len, FieldValue::F64Array(unsafe {
-                            let slice_ptr = bytes[4..4 + 4 * vec_len].as_ptr();
-                            std::slice::from_raw_parts::<f64>(slice_ptr as *const f64, vec_len)
-                        }.into()))
-                    },
-                    PrimitiveDataType::String => {
-                        // This is unfortunately slow
-                        // First get all of the lengths
-                        let mut str_pos_len = Vec::with_capacity(vec_len);
-                        let mut cur_pos = 4usize;
-                        for _ in (0..vec_len) {
-                            let str_len = LE::read_u32(&bytes[cur_pos..cur_pos + 4]) as usize;
-                            str_pos_len.push((cur_pos + 4, str_len));
-                            cur_pos += str_len + 4;
-                        }
-
-                        (cur_pos, FieldValue::StringArray(str_pos_len.into_iter().map(|(str_pos, str_len)| {
-                            String::from_utf8_lossy(&bytes[str_pos..str_pos+str_len]).to_string()
-                        }).collect()))
-                    },
-                    PrimitiveDataType::Time => todo!(),
-                    PrimitiveDataType::Duration => todo!(),
-                }
+                let (bytes_len, value) = parse_primitive_array(&bytes[4..], vec_len, elem_type);
+                (bytes_len + 4, value)
             },
-            DataType::PrimitiveArray(_, _) => todo!(),
+            DataType::PrimitiveArray(arr_len, elem_type) => {
+                parse_primitive_array(bytes, *arr_len, elem_type)
+            },
             DataType::Complex(complex) => {
                 complex.try_parse(bytes)?
             },
             DataType::ComplexVector(msg) => {
                 let vec_len = LE::read_u32(&bytes[..4]) as usize;
-                let mut vec = Vec::with_capacity(vec_len);
-                let mut offset = 4usize;
-                for _ in 0..vec_len {
-                    let (msg_len, msg_val) = msg.try_parse(&bytes[offset..])?;
-                    if let FieldValue::Msg(msg_value) = msg_val {
-                        vec.push(msg_value);
-                    } else {
-                        return Err(anyhow!("Bad parsing of message"));
-                    }
-                    offset += msg_len;
-                }
-                (offset, FieldValue::MsgArray(vec))
+                let (bytes_len, value) = parse_complex_array(&bytes[4..], vec_len, msg)?;
+                (bytes_len + 4, value)
             },
-            DataType::ComplexArray(_, _) => todo!(),
+            DataType::ComplexArray(arr_len, msg) => {
+                parse_complex_array(bytes, *arr_len, msg)?
+            }
         })
     }
 }

@@ -1,14 +1,15 @@
 use std::{sync::Arc, path::Path, collections::HashMap};
 
 use anyhow::{self, Result};
+use indicatif::ProgressBar;
 use object_store::{ObjectMeta, ObjectStore};
-use ros_msg::{msg_value::FieldValue, traits::ParseBytes as _};
-use tokio::sync::OnceCell;
+use ros_msg::{msg_type::MsgType, msg_value::{FieldValue, MsgValue}, traits::ParseBytes as _};
+use tokio::{runtime::Runtime, sync::OnceCell};
 
 use crate::{meta::Meta, records::{record::{Record, parse_header_bytes, self}, bag_header::BagHeader, connection::Connection, chunk::ChunkData}, cursor::Cursor, constants::{VERSION_LEN, VERSION_STRING}, error::RosError};
 use url::Url;
 
-#[derive()]
+#[derive(Debug, Clone)]
 pub struct Bag {
     bag_meta: OnceCell<Meta>,
     bag_header: OnceCell<BagHeader>,
@@ -77,44 +78,16 @@ impl Bag {
         meta.unwrap()
     }
 
-    pub async fn read_messages(&self, topics: Option<Vec<String>>, start: Option<u64>, end: Option<u64>) -> Result<()> {
+    pub async fn read_messages(&'_ self, topics: Option<Vec<String>>, start: Option<u64>, end: Option<u64>, verbose: bool) -> BagMessageIterator {
         let meta = self.borrow_meta().await;
         let start = start.map(|v| meta.start_time() + v * 1_000_000_000).unwrap_or_else(|| meta.start_time());
         let end = end.map(|v| meta.end_time() + v * 1_000_000_000).unwrap_or_else(|| meta.end_time());
 
-        let chunk_positions = meta.filter_chunks(None, Some(start), Some(end))?;
+        let chunk_positions = meta.filter_chunks(topics.as_ref(), Some(start), Some(end)).unwrap();
 
+        let iter = BagMessageIterator::new(self.clone(), meta.clone(), start, end, chunk_positions, verbose);
 
-        let bar = indicatif::ProgressBar::new(chunk_positions.len() as u64);
-        let con_to_msg = meta.borrow_connection_to_id_message();
-        for pos in chunk_positions {
-            bar.inc(1);
-            let pos = pos as usize;
-            let header_bytes = self.cursor.read_chunk(pos).await.unwrap();
-            let header_len = header_bytes.len();
-            let data_pos = pos + 4 + header_len;
-            let record_with_header = parse_header_bytes(data_pos, header_bytes)?;
-
-
-            if let record::Record::Chunk(c) = record_with_header {
-                let chunk_bytes = c.decompress(self.cursor.read_chunk(data_pos).await?)?;
-
-                let chunk_data = ChunkData::try_from_bytes_with_time_check(chunk_bytes, start, end)?;
-
-                for message_data in chunk_data.message_datas {
-                    let msg = con_to_msg.get(&message_data._conn).unwrap().try_parse(&message_data.data.unwrap());
-                    // println!("Message Data conn: {} Data len: {:?}", message_data._conn, &message_data.data.map(|d| d.len()));
-                    // WARN: Slow!
-                    // let msg = msg_map.get(&message_data._conn).unwrap().decode(message_data.data.unwrap().reader())?;
-                }
-
-            } else {
-                return Err(RosError::InvalidRecord("Unexpected record. Expected Chunk").into());
-            }
-        }
-        bar.finish();
-
-        Ok(())
+        iter
     }
 }
 
@@ -137,15 +110,105 @@ async fn read_bag_header(cursor: &Cursor) -> Result<BagHeader> {
 
 
 // Helper struct for iteration of msgs
-pub struct BagMessageIterator<'b> {
-    inner: &'b Bag,
+pub struct BagMessageIterator {
+    inner: Bag,
+    start: u64,
+    end: u64,
+    chunk_positions: Vec<u64>,
+    con_to_msg: HashMap<u32, MsgType>,
+
+    runtime: Runtime,
+
+    chunk_index: usize,
+    msg_index: usize,
+    chunk_data: Option<ChunkData>,
+
+    progress_bar: Option<ProgressBar>,
+    last_timestamp: u64,
 }
 
-impl<'b> Iterator for BagMessageIterator<'b> {
-    type Item = FieldValue;
+impl BagMessageIterator {
+    fn new(bag: Bag, meta: Meta, start: u64, end: u64, chunk_positions: Vec<u64>, verbose: bool) -> Self {
+        let con_to_msg = meta.borrow_connection_to_id_message();
+        let progress_bar = if verbose {
+            Some(indicatif::ProgressBar::new((end - start) / 1_000_000_000))
+        } else {
+            None
+        };
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        BagMessageIterator {
+            inner: bag,
+            start,
+            end,
+            chunk_positions,
+            con_to_msg: con_to_msg.clone(),
+            runtime,
+            chunk_index: 0,
+            msg_index: 0,
+            chunk_data: None,
+            progress_bar,
+            last_timestamp: start,
+        }
+    }
+}
+
+impl Iterator for BagMessageIterator {
+    type Item = MsgValue;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // self.inner.
-        todo!()
+        let bag = &self.inner;
+
+        if self.chunk_data.as_ref().map(|cd| cd.message_datas.len() <= self.msg_index).unwrap_or(true) {
+            println!("in if");
+            if self.chunk_index >= self.chunk_positions.len() {
+                return None;
+            }
+            self.msg_index = 0;
+
+            self.chunk_data = self.runtime.block_on(async {
+                println!("in async a chunk");
+                let pos = self.chunk_positions[self.chunk_index];
+                let pos = pos as usize;
+                let header_bytes = bag.cursor.read_chunk(pos).await.unwrap();
+                let header_len = header_bytes.len();
+                let data_pos = pos + 4 + header_len;
+                let record_with_header = parse_header_bytes(data_pos, header_bytes).ok()?;
+
+
+                let chunk_data = if let record::Record::Chunk(c) = record_with_header {
+                    println!("Decompressing");
+                    let chunk_bytes = c.decompress(bag.cursor.read_chunk(data_pos).await.ok()?).ok()?;
+
+                    ChunkData::try_from_bytes_with_time_check(chunk_bytes, self.start, self.end).ok()
+                } else {
+                    println!("record not a chunk");
+                    return None;
+                };
+
+                chunk_data
+            });
+
+            self.chunk_index += 1;
+
+        }
+
+        let msg_data = self.chunk_data.as_ref().unwrap().message_datas.get(self.msg_index)?;
+        self.msg_index += 1;
+
+        if let Some(pbar) = &self.progress_bar {
+            pbar.inc(msg_data._time - self.last_timestamp);
+        }
+        self.last_timestamp = msg_data._time;
+        let msg_val = match self.con_to_msg.get(&msg_data._conn).unwrap().try_parse(&msg_data.data.clone().unwrap()) {
+            Ok((_, FieldValue::Msg(msg))) => Some(msg),
+            _ => None,
+        };
+
+        msg_val
     }
 }

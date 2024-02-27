@@ -16,6 +16,18 @@ impl MsgValue {
             fields
         }
     }
+
+    pub fn fields(&self) -> Vec<String> {
+        self.fields.keys().cloned().collect()
+    }
+
+    pub fn constants(&self) -> &HashMap<String, ConstField> {
+        &self.constants
+    }
+
+    pub fn field(&self, field: &String) -> Option<&FieldValue> {
+        self.fields.get(field)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

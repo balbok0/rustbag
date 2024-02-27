@@ -1,0 +1,13 @@
+name: benches-rosbags-rs
+
+channels:
+  - robostack-staging
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python =3.9
+  - ros-noetic-desktop
+  - pip
+  - pip:
+    - -r requirements.txt

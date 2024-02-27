@@ -1,29 +1,59 @@
-use std::{sync::Arc, path::Path, collections::{HashMap, HashSet}, borrow::Borrow};
-use bytes::Buf;
+use std::{
+    collections::{BinaryHeap, HashMap, VecDeque},
+    path::Path,
+    sync::Arc,
+};
 
 use anyhow::{self, Result};
 use object_store::{ObjectMeta, ObjectStore};
-use tokio::sync::OnceCell;
+use ros_msg::{
+    msg_type::MsgType,
+    msg_value::{FieldValue, MsgValue},
+    traits::ParseBytes as _,
+};
+use tokio::{
+    runtime::Runtime,
+    sync::{
+        mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender},
+        OnceCell,
+    },
+    task::JoinSet,
+};
 
-use crate::{meta::Meta, records::{record::{Record, parse_header_bytes, self}, bag_header::BagHeader, connection::Connection, chunk::ChunkData}, cursor::Cursor, constants::{VERSION_LEN, VERSION_STRING}, error::RosError};
+use crate::{
+    constants::{VERSION_LEN, VERSION_STRING},
+    cursor::Cursor,
+    error::RosError,
+    meta::Meta,
+    records::{
+        bag_header::BagHeader,
+        chunk::ChunkData,
+        chunk_info::ChunkInfo,
+        connection::Connection,
+        record::{self, parse_header_bytes, Record},
+    },
+};
 use url::Url;
 
-#[derive()]
+type MsgIterValue = (u64, u32, MsgValue);
+
+#[derive(Debug, Clone)]
 pub struct Bag {
     bag_meta: OnceCell<Meta>,
-    bag_header: BagHeader,
+    bag_header: OnceCell<BagHeader>,
     cursor: Cursor,
 }
 
-
 impl Bag {
-    pub async fn try_new_from_object_store_meta(object_store: Arc<Box<dyn ObjectStore>>, object_meta: ObjectMeta) -> Result<Self> {
+    pub fn try_new_from_object_store_meta(
+        object_store: Arc<Box<dyn ObjectStore>>,
+        object_meta: ObjectMeta,
+    ) -> Result<Self> {
         let cursor = Cursor::new(object_store, object_meta);
 
-        let bag_header = read_bag_header(&cursor).await?;
         Ok(Bag {
             bag_meta: OnceCell::new(),
-            bag_header,
+            bag_header: OnceCell::new(),
             cursor,
         })
     }
@@ -32,7 +62,7 @@ impl Bag {
         let (obj_store, object_path) = object_store::parse_url(url)?;
         let object_meta = obj_store.head(&object_path).await?;
 
-        Bag::try_new_from_object_store_meta(Arc::new(obj_store), object_meta).await
+        Bag::try_new_from_object_store_meta(Arc::new(obj_store), object_meta)
     }
 
     pub async fn try_from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -40,7 +70,7 @@ impl Bag {
         let obj_path = object_store::path::Path::from_filesystem_path(path)?;
         let obj_meta = obj_store.head(&obj_path).await?;
 
-        Bag::try_new_from_object_store_meta(Arc::new(Box::new(obj_store)), obj_meta).await
+        Bag::try_new_from_object_store_meta(Arc::new(Box::new(obj_store)), obj_meta)
     }
 
     pub async fn connections_by_topic(&self) -> Result<&HashMap<String, Vec<Connection>>> {
@@ -57,13 +87,24 @@ impl Bag {
         topics
     }
 
+    async fn borrow_bag_header(&self) -> Result<&BagHeader> {
+        self.bag_header
+            .get_or_try_init(|| async { read_bag_header(&self.cursor).await })
+            .await
+    }
+
     async fn borrow_meta(&self) -> &Meta {
-        let meta = self.bag_meta.get_or_try_init(
-            || async {
-                let index_pos = self.bag_header._index_pos as usize;
-                Meta::try_new_from_bytes(self.cursor.read_bytes(index_pos, self.cursor.len() - index_pos).await?)
-            }
-        ).await;
+        let meta = self
+            .bag_meta
+            .get_or_try_init(|| async {
+                let index_pos = self.borrow_bag_header().await?._index_pos as usize;
+                Meta::try_new_from_bytes(
+                    self.cursor
+                        .read_bytes(index_pos, self.cursor.len() - index_pos)
+                        .await?,
+                )
+            })
+            .await;
 
         if meta.is_err() {
             panic!("Could not read Bag metadata {:#?}", meta)
@@ -72,55 +113,39 @@ impl Bag {
         meta.unwrap()
     }
 
-    pub async fn test(&self) -> Result<()> {
-        // Check message parsing
-        let dyn_msg_map = self.borrow_meta().await.borrow_connection_to_id_message();
+    pub async fn read_messages(
+        &self,
+        topics: Option<Vec<String>>,
+        start: Option<u64>,
+        end: Option<u64>,
+    ) -> BagMessageIterator {
+        let meta = self.borrow_meta().await;
+        let start = start
+            .map(|v| meta.start_time() + v * 1_000_000_000)
+            .unwrap_or_else(|| meta.start_time());
+        let end = end
+            .map(|v| meta.end_time() + v * 1_000_000_000)
+            .unwrap_or_else(|| meta.end_time());
 
-        // Bag bounds 1630169773_000_000_000u64 to 1630169785_000_000_000u64
-        let start_ts = 1630169779_000_000_000u64;
-        let end_ts = 1630169782_000_000_000u64;
+        let chunk_infos = meta
+            .filter_chunks(topics.as_ref(), Some(start), Some(end))
+            .unwrap();
 
-        let topics = vec!["/ros_talon/current_position".to_string()];
-        let chunk_positions = self.borrow_meta().await.filter_chunks(None, Some(start_ts), Some(end_ts))?;
+        let iter = BagMessageIterator::new(
+            self.clone(),
+            meta.clone(),
+            start,
+            end,
+            chunk_infos.into_iter().cloned().collect(),
+        );
 
-        let cons: HashSet<_> = self.borrow_meta().await.topic_to_connections.get(&topics[0]).unwrap().clone().iter().map(|c| c._conn).collect();
+        iter
+    }
 
-        println!("Chunk positions: {} / {}", chunk_positions.len(), self.borrow_meta().await.chunk_infos.len());
-
-
-        let bar = indicatif::ProgressBar::new(chunk_positions.len() as u64);
-        for pos in chunk_positions {
-            bar.inc(1);
-            let pos = pos as usize;
-            let header_bytes = self.cursor.read_chunk(pos).await.unwrap();
-            let header_len = header_bytes.len();
-            let data_pos = pos + 4 + header_len;
-            let record_with_header = parse_header_bytes(data_pos, header_bytes).unwrap();
-
-
-            if let record::Record::Chunk(c) = record_with_header {
-                let chunk_bytes = c.decompress(self.cursor.read_chunk(data_pos).await?)?;
-
-                let chunk_data = ChunkData::try_from_bytes_with_time_check(chunk_bytes, start_ts, end_ts)?;
-                // let chunk_data = ChunkData::try_from_bytes_with_con_time_check(chunk_bytes, &cons, start_ts, end_ts)?;
-
-                for message_data in chunk_data.message_datas {
-                    // println!("Message Data conn: {} Data len: {:?}", message_data._conn, &message_data.data.map(|d| d.len()));
-                    // WARN: Slow!
-                    let msg = dyn_msg_map.get(&message_data._conn).unwrap().decode(message_data.data.unwrap().reader())?;
-                }
-
-                // println!("ChunkData: {}", chunk_bytes.len());
-            } else {
-                return Err(RosError::InvalidRecord("Unexpected record. Expected Chunk").into());
-            }
-        }
-        bar.finish();
-
-        Ok(())
+    pub async fn num_messages(&self) -> u64 {
+        self.borrow_meta().await.num_messages()
     }
 }
-
 
 // Helper Function
 async fn read_bag_header(cursor: &Cursor) -> Result<BagHeader> {
@@ -135,5 +160,229 @@ async fn read_bag_header(cursor: &Cursor) -> Result<BagHeader> {
         Ok(bh)
     } else {
         Err(RosError::InvalidHeader("Invalid Bag Header record type.").into())
+    }
+}
+
+// Helper struct for iteration of msgs
+pub struct BagMessageIterator {
+    _runtime: Runtime,
+    message_reader: UnboundedReceiver<Option<Vec<MsgIterValue>>>,
+    msg_queue: VecDeque<MsgIterValue>,
+}
+
+pub(super) async fn start_parse_msgs(
+    bag: Bag,
+    chunk_infos: Vec<ChunkInfo>,
+    con_to_msg: HashMap<u32, MsgType>,
+    start: u64,
+    end: u64,
+    message_sender: UnboundedSender<Option<Vec<MsgIterValue>>>,
+) {
+    let (tx, chunk_result_recv) = tokio::sync::mpsc::channel(100);
+
+    let sorted_fut = tokio::spawn(async move {
+        order_parsed_messaged(chunk_result_recv, message_sender)
+            .await
+            .unwrap();
+    });
+
+    // Chunk parsing
+    let mut futures = JoinSet::new();
+
+    for chunk_idx in 0..chunk_infos.len() {
+        if futures.len() >= 100 {
+            // Wait for some future to finish
+            match futures.join_next().await {
+                Some(v) => {
+                    // FIXME: Do not fail silently
+                    if v.is_err() {}
+                }
+                None => {
+                    // FIXME: Do not fail silently
+                    return;
+                }
+            }
+        }
+
+        let chunk_info = &chunk_infos[chunk_idx];
+        let chunk_pos = chunk_info._chunk_pos as usize;
+        // TODO: Logic for waiting
+
+        let chunk_con_to_msg = HashMap::from_iter(
+            chunk_info
+                .data
+                .get()
+                .unwrap()
+                .iter()
+                .map(|c| (c._conn, con_to_msg.get(&c._conn).unwrap().clone())),
+        );
+
+        let cur_tx = tx.clone();
+        let chunk_bag = bag.clone();
+
+        futures.spawn(async move {
+            parse_chunk(
+                cur_tx,
+                chunk_bag,
+                chunk_idx,
+                chunk_pos,
+                start,
+                end,
+                chunk_con_to_msg,
+            )
+            .await
+            .unwrap();
+        });
+    }
+    // println!("Num chunks parsed: {}", chunk_infos.len());
+
+    // Make sure all parsing is done
+    while !futures.is_empty() {
+        futures.join_next().await;
+    }
+
+    // Drop tx
+    std::mem::drop(tx);
+
+    sorted_fut.await.unwrap();
+}
+
+async fn order_parsed_messaged(
+    mut chunk_result_recv: Receiver<(usize, Vec<MsgIterValue>)>,
+    sorted_result_sender: UnboundedSender<Option<Vec<MsgIterValue>>>,
+) -> Result<()> {
+    let mut next_idx = 0;
+
+    let mut parsed_ooo_chunks = BinaryHeap::new();
+
+    loop {
+        // If not check for any futures
+        match chunk_result_recv.try_recv() {
+            Ok((chunk_idx, msg_vals)) => {
+                if chunk_idx == next_idx {
+                    next_idx += 1;
+                    sorted_result_sender.send(Some(msg_vals)).unwrap();
+                } else {
+                    parsed_ooo_chunks.push((-(chunk_idx as i64), msg_vals))
+                }
+            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                sorted_result_sender.send(None).unwrap();
+                break;
+            }
+        }
+
+        // Lastly peek at OOO chunks to see if they should be added
+        loop {
+            match parsed_ooo_chunks.peek() {
+                Some((chunk_idx, _)) => {
+                    if -chunk_idx as usize == next_idx {
+                        let (_, msg_vals) = parsed_ooo_chunks.pop().unwrap();
+                        next_idx += 1;
+                        sorted_result_sender.send(Some(msg_vals)).unwrap();
+                    } else {
+                        break;
+                    }
+                }
+                None => break,
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn parse_chunk(
+    tx: Sender<(usize, Vec<MsgIterValue>)>,
+    bag: Bag,
+    chunk_idx: usize,
+    pos: usize,
+    start: u64,
+    end: u64,
+    con_to_msg: HashMap<u32, MsgType>,
+) -> Result<()> {
+    let header_bytes = bag.cursor.read_chunk(pos).await.unwrap();
+    let header_len = header_bytes.len();
+    let data_pos = pos + 4 + header_len;
+    let record_with_header = parse_header_bytes(data_pos, header_bytes)?;
+
+    let chunk_data = if let record::Record::Chunk(c) = record_with_header {
+        let chunk_bytes = c
+            .decompress(bag.cursor.read_chunk(data_pos).await.unwrap())
+            .unwrap();
+
+        ChunkData::try_from_bytes_with_time_check(chunk_bytes, start, end).unwrap()
+    } else {
+        return Err(anyhow::Error::new(RosError::InvalidRecord(
+            "Bad Record type detected. Expected Chunk.",
+        )));
+    };
+
+    let mut message_vals = Vec::with_capacity(chunk_data.message_datas.len());
+    for md in chunk_data.message_datas {
+        let msg_val = match con_to_msg
+            .get(&md._conn)
+            .unwrap()
+            .try_parse(&md.data.unwrap())
+        {
+            Ok((_, FieldValue::Msg(msg))) => msg,
+            _ => {
+                return Err(anyhow::Error::new(RosError::InvalidRecord(
+                    "MessageData did not contain a parsable Value",
+                )));
+            }
+        };
+        message_vals.push((md._time, md._conn, msg_val));
+    }
+
+    tx.send((chunk_idx, message_vals)).await.unwrap();
+
+    Ok(())
+}
+
+impl BagMessageIterator {
+    fn new(bag: Bag, meta: Meta, start: u64, end: u64, chunk_infos: Vec<ChunkInfo>) -> Self {
+        let con_to_msg = meta.borrow_connection_to_id_message();
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(8)
+            .build()
+            .unwrap();
+
+        let (message_sender, message_reader) = tokio::sync::mpsc::unbounded_channel();
+        runtime.spawn(start_parse_msgs(
+            bag,
+            chunk_infos,
+            con_to_msg.clone(),
+            start,
+            end,
+            message_sender,
+        ));
+
+        let s = BagMessageIterator {
+            _runtime: runtime,
+            message_reader,
+            msg_queue: VecDeque::new(),
+        };
+
+        s
+    }
+}
+
+impl Iterator for BagMessageIterator {
+    type Item = MsgIterValue;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.msg_queue.pop_front() {
+            Some(msg) => Some(msg),
+            None => match self.message_reader.blocking_recv() {
+                Some(Some(msgs)) => {
+                    self.msg_queue.append(&mut msgs.into());
+                    Some(self.msg_queue.pop_front().unwrap())
+                }
+                Some(None) | None => None,
+            },
+        }
     }
 }

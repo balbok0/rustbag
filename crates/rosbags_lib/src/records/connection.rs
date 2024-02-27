@@ -1,8 +1,9 @@
 use anyhow::{self, Result};
 use byteorder::{ByteOrder, LE};
 use bytes::Bytes;
+use ros_msg::msg_type::MsgType;
 
-use std::{collections::HashMap, cell::OnceCell};
+use std::{collections::HashMap, sync::OnceLock};
 
 use crate::{error::RosError, utils::parse_bytes_into_field_map};
 
@@ -13,7 +14,7 @@ pub struct Connection {
     pub _conn: u32,
     pub _topic: String,
     // Data
-    pub data: OnceCell<ConnectionData>,
+    pub data: OnceLock<ConnectionData>,
 }
 
 impl Connection {
@@ -25,7 +26,7 @@ impl Connection {
             data_pos,
             _conn,
             _topic,
-            data: OnceCell::new(),
+            data: OnceLock::new(),
         })
     }
 }
@@ -60,5 +61,9 @@ impl ConnectionData {
             _latching,
             _callerid
         })
+    }
+
+    pub fn parse_def(&self, msg_def_cache: &mut HashMap<String, MsgType>) -> Result<MsgType> {
+        ros_msg::parse_msg::parse_con_msg_def(self._type.as_str(), msg_def_cache, &self._message_definition)
     }
 }

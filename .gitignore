@@ -1,3 +1,7 @@
+# Temporary folders
+temp/
+tmp/
+
 # IDEs
 .vscode
 
@@ -15,3 +19,7 @@ Cargo.lock
 
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
+
+# Profilers
+perf.*
+log.*

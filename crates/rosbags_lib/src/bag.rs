@@ -196,7 +196,7 @@ impl Iterator for BagMessageIterator {
         let msg_data = self.chunk_data.as_ref().unwrap().message_datas.get(self.msg_index)?;
         self.msg_index += 1;
 
-        let cur_ts = msg_data._time.max(self.last_timestamp) / 1_000_000_000;
+        let cur_ts = (msg_data._time / 1_000_000_000).max(self.last_timestamp);
         if let Some(pbar) = &self.progress_bar {
             pbar.inc(cur_ts - self.last_timestamp);
         }

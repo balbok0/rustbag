@@ -2,7 +2,8 @@ use std::{collections::{HashMap, HashSet}, cell::OnceCell, borrow::Borrow};
 
 use bytes::Bytes;
 use anyhow::Result;
-use rosrust::DynamicMsg;
+use ros_message::DynamicMsg;
+// use rosrust::DynamicMsg;
 
 use crate::{iterators::RecordBytesIterator, records::{record::Record, connection::{Connection, ConnectionData}, chunk_info::ChunkInfo, chunk}, error::RosError};
 
@@ -22,7 +23,7 @@ impl Meta {
             match record {
                 Record::Connection(con) => {
                     let con_data = con.data.get_or_init(|| ConnectionData::try_new(data_bytes).unwrap());
-                    println!("\n\nTopic: {} message definition:\n{}\n", con._topic, con_data._message_definition);
+                    // println!("\n\nTopic: {} message definition:\n{}\n", con._topic, con_data._message_definition);
                     topic_to_connections.entry(con._topic.clone()).or_insert(Vec::new()).push(con);
                 },
                 Record::ChunkInfo(chunk_info) => {
@@ -87,6 +88,18 @@ impl Meta {
             for con in self.topic_to_connections.values().into_iter().flatten() {
                 let con_data = con.data.get().unwrap(); // Note it exists, since we create it in new
                 let msg = DynamicMsg::new(con_data._type.as_str().into(), con_data._message_definition.as_str()).unwrap();
+
+                let mut msg_name_line = false;
+                for line in con_data._message_definition.lines() {
+                    if msg_name_line {
+                        let msg_name: Vec<_> = line.splitn(3, " ").collect();
+                        let msg_name = msg_name[1];
+
+                        msg_name_line = false;
+                    } else if line.starts_with("========") {
+                        msg_name_line = true;
+                    }
+                }
                 // TODO: DynamicMsg is very slow to decode. I believe this is because of it's nested-ness.
                 // I think that flattening the msg would significantly increase the throughput (also allow to operate directly on bytes)
 

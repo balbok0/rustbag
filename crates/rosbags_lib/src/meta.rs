@@ -1,20 +1,27 @@
+use std::collections::HashMap;
+
 use bytes::Bytes;
 use anyhow::Result;
 
 use crate::{iterators::RecordBytesIterator, records::{record::Record, connection::{Connection, ConnectionData}, chunk_info::ChunkInfo}, error::RosError};
 
 #[derive(Debug, Clone)]
-pub(crate) struct Meta {}
+pub(crate) struct Meta {
+    pub(crate) topic_to_connections: HashMap<String, Vec<Connection>>,
+}
 
 impl Meta {
     pub(crate) fn try_new_from_bytes(bytes: Bytes) -> Result<Self> {
         println!("Num bytes: {}", bytes.len());
+        let mut topic_to_connections = HashMap::new();
 
         for (record, data_bytes) in RecordBytesIterator::new(bytes) {
             let dummy = match record {
                 Record::Connection(con) => {
-                    let con_data = con.data.get_or_init(|| ConnectionData::try_new(data_bytes).unwrap());
-                    println!("Con topic: {}", con_data._topic);
+                    {
+                        con.data.get_or_init(|| ConnectionData::try_new(data_bytes).unwrap());
+                    }
+                    topic_to_connections.entry(con._topic.clone()).or_insert(Vec::new()).push(con);
                     3
                 },
                 Record::ChunkInfo(chunk_info) => {
@@ -28,6 +35,8 @@ impl Meta {
             };
         }
 
-        Ok(Meta {  })
+        Ok(Meta {
+            topic_to_connections,
+        })
     }
 }

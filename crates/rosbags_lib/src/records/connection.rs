@@ -7,13 +7,13 @@ use std::{collections::HashMap, cell::OnceCell};
 use crate::{error::RosError, utils::parse_bytes_into_field_map};
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) struct Connection {
-    pub(crate) data_pos: usize,
+pub struct Connection {
+    pub data_pos: usize,
     // Header fields
-    pub(crate) _conn: u32,
-    pub(crate) _topic: String,
+    pub _conn: u32,
+    pub _topic: String,
     // Data
-    pub(crate) data: OnceCell<ConnectionData>,
+    pub data: OnceCell<ConnectionData>,
 }
 
 impl Connection {
@@ -31,13 +31,13 @@ impl Connection {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ConnectionData {
-    pub(crate) _topic: String,
-    pub(crate) _type: String,
-    pub(crate) _message_definition: String,
-    pub(crate) _md5sum: String,
-    pub(crate) _latching: Option<bool>,
-    pub(crate) _callerid: Option<String>,
+pub struct ConnectionData {
+    pub _topic: String,
+    pub _type: String,
+    pub _message_definition: String,
+    pub _md5sum: String,
+    pub _latching: Option<bool>,
+    pub _callerid: Option<String>,
 }
 
 impl ConnectionData {

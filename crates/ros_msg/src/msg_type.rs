@@ -34,6 +34,27 @@ impl MsgType {
     }
 }
 
+impl MsgType {
+    #[cfg(test)]
+    pub(crate) fn new(
+        constants: HashMap<String, ConstField>,
+        fields: HashMap<String, Field>,
+        known_size: Option<usize>,
+        init_known_size: bool,
+    ) -> Self {
+        let ks = OnceCell::new();
+        if init_known_size {
+            ks.get_or_init(|| known_size);
+        }
+        MsgType {
+            constants,
+            fields,
+            known_size: ks,
+        }
+    }
+
+}
+
 impl MaybeSized for MsgType {
     fn known_size(&self) -> Option<usize> {
         *self.known_size.get_or_init(|| {

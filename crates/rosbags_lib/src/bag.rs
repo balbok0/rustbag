@@ -1,10 +1,10 @@
-use std::{sync::Arc, path::Path};
+use std::{sync::Arc, path::Path, collections::HashMap};
 
 use anyhow::{self, Result};
 use object_store::{ObjectMeta, ObjectStore};
 use tokio::sync::OnceCell;
 
-use crate::{meta::Meta, records::{record::{Record, parse_header_bytes}, bag_header::BagHeader}, cursor::Cursor, constants::{VERSION_LEN, VERSION_STRING}, error::RosError};
+use crate::{meta::Meta, records::{record::{Record, parse_header_bytes}, bag_header::BagHeader, connection::Connection}, cursor::Cursor, constants::{VERSION_LEN, VERSION_STRING}, error::RosError};
 use url::Url;
 
 #[derive()]
@@ -50,10 +50,18 @@ impl Bag {
         Ok(())
     }
 
-    pub async fn connections_by_topic(&self) -> Result<()> {
+    pub async fn connections_by_topic(&self) -> Result<&HashMap<String, Vec<Connection>>> {
         let meta = self.borrow_meta().await;
 
-        Ok(())
+        Ok(&meta.topic_to_connections)
+    }
+
+    pub async fn topics(&self) -> Vec<&String> {
+        let meta = self.borrow_meta().await;
+
+        let topics: Vec<_> = meta.topic_to_connections.keys().collect();
+
+        topics
     }
 
     async fn borrow_meta(&self) -> &Meta {

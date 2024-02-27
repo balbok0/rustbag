@@ -1,10 +1,10 @@
-use ros_msg::msg_value::MsgValue;
-use rosbags_lib::{bag::BagMessageIterator, Bag as RustBag};
+use rosbags_lib::Bag as RustBag;
 use pyo3::prelude::*;
 
 use tokio::runtime::Runtime;
 
-type MsgIterValue = (u64, u32, MsgValue);
+use crate::msg_iter::PythonMessageIter;
+
 
 #[pyclass]
 pub struct Bag {
@@ -54,22 +54,5 @@ impl Bag {
                 slf.inner.num_messages().await
             }
         )
-    }
-}
-
-
-#[pyclass]
-pub struct PythonMessageIter {
-    inner: BagMessageIterator,
-}
-
-#[pymethods]
-impl PythonMessageIter {
-    pub fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    pub fn __next__(mut slf: PyRefMut<'_, Self>) -> Option<MsgIterValue> {
-        slf.inner.next()
     }
 }

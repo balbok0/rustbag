@@ -1,4 +1,5 @@
 pub mod bag;
+mod bag_msg_iterator;
 mod constants;
 mod cursor;
 mod error;
@@ -8,3 +9,4 @@ mod records;
 mod utils;
 
 pub use bag::Bag;
+pub use bag_msg_iterator::BagMessageIterator;

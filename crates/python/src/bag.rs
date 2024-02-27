@@ -1,6 +1,6 @@
 use ros_msg::msg_value::MsgValue;
 use rosbags_lib::{bag::BagMessageIterator, Bag as RustBag};
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
 
 use tokio::runtime::Runtime;
 
@@ -15,7 +15,7 @@ pub struct Bag {
 impl Bag {
     #[new]
     pub fn new<'p>(
-        py: Python<'p>,
+        _py: Python<'p>,
         bag_uri: &str,
     ) -> Self {
 
@@ -34,10 +34,10 @@ impl Bag {
         }
     }
 
-    pub fn read_messages(slf: PyRef<'_, Self>, verbose: bool, topics: Option<Vec<String>>, start: Option<u64>, end: Option<u64>) -> PyResult<Py<PythonMessageIter>> {
+    pub fn read_messages(slf: PyRef<'_, Self>, topics: Option<Vec<String>>, start: Option<u64>, end: Option<u64>) -> PyResult<Py<PythonMessageIter>> {
         let bag_iter = slf.runtime.block_on(
             async {
-                slf.inner.read_messages(topics, start, end, verbose).await
+                slf.inner.read_messages(topics, start, end, false).await
             }
         );
         let python_iter = PythonMessageIter {
@@ -59,29 +59,7 @@ impl PythonMessageIter {
         slf
     }
 
-    pub fn __next__(mut slf: PyRefMut<'_, Self>) -> Option<PythonMsgValue> {
-        slf.inner.next().map(PythonMsgValue::from)
-    }
-}
-
-#[pyclass]
-pub struct PythonMsgValue {
-    inner: MsgValue,
-}
-
-impl From<MsgValue> for PythonMsgValue {
-    fn from(inner: MsgValue) -> Self {
-        Self { inner }
-    }
-}
-
-#[pymethods]
-impl PythonMsgValue {
-    pub fn fields(slf: PyRef<'_, Self>) -> Vec<String> {
-        slf.inner.fields()
-    }
-
-    pub fn __getattr__(slf: PyRef<'_, Self>, name: &str) -> PyResult<()> {
-        slf.inner.field(name,to_string()).ok_or(PyValueError::new_err("Could not find key"))
+    pub fn __next__(mut slf: PyRefMut<'_, Self>) -> Option<MsgValue> {
+        slf.inner.next()
     }
 }

@@ -6,23 +6,25 @@ from rosbags.highlevel import AnyReader
 from rosbags_rs import Bag
 from embag import View
 
+path = Path(__file__).parent.parent / "HMB_1.bag"
+
 # create reader instance and open for reading
-with AnyReader([Path("/data/disk0/20210828_heightmaps_1/20210828_12.bag")]) as reader:
+with AnyReader([path]) as reader:
     for connection, timestamp, rawdata in tqdm.tqdm(reader.messages(), desc="rosbags"):
         msg = reader.deserialize(rawdata, connection.msgtype)
         # d = msg.fields()
 
-bag = Bag("/data/disk0/20210828_heightmaps_1/20210828_12.bag")
+bag = Bag(str(path))
 for msg in tqdm.tqdm(bag.read_messages(), desc="rs"):
     pass
 
 view = View()
-view.addBag("/data/disk0/20210828_heightmaps_1/20210828_12.bag")
+view.addBag(str(path))
 
 for msg in tqdm.tqdm(view.getMessages(), desc="embag"):
     deser_data = msg.data()
     pass
 
-bag = rosbag.Bag("/data/disk0/20210828_heightmaps_1/20210828_12.bag")
+bag = rosbag.Bag(str(path))
 for msg in tqdm.tqdm(bag.read_messages(), desc="Default rosbag"):
     pass

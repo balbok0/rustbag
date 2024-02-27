@@ -1,2 +1,0 @@
-#[derive()]
-pub struct Meta {}

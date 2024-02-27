@@ -6,7 +6,7 @@ use std::{collections::HashMap, cell::OnceCell};
 
 use crate::{error::RosError, utils::parse_bytes_into_field_map};
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Connection {
     pub data_pos: usize,
     // Header fields
@@ -30,7 +30,7 @@ impl Connection {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ConnectionData {
     pub _topic: String,
     pub _type: String,

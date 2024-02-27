@@ -1,4 +1,4 @@
-use std::{cmp::{max, min}, collections::{HashMap, HashSet}};
+use std::collections::{HashMap, HashSet};
 
 use bytes::Bytes;
 use anyhow::Result;
@@ -32,6 +32,7 @@ impl Meta {
             };
         }
 
+        // Keeping chunks sorted is important for filtering. And reading chunks in order
         chunk_infos.sort_unstable_by_key(|ci| ci._start_time);
 
         Ok(Meta {

@@ -4,7 +4,7 @@ use anyhow::{self, Result};
 use object_store::{ObjectMeta, ObjectStore};
 use tokio::sync::OnceCell;
 
-use crate::{meta::Meta, records::{record::{Record, parse_header_bytes}, bag_header::BagHeader, connection::Connection}, cursor::Cursor, constants::{VERSION_LEN, VERSION_STRING}, error::RosError};
+use crate::{meta::Meta, records::{record::{Record, parse_header_bytes, self}, bag_header::BagHeader, connection::Connection}, cursor::Cursor, constants::{VERSION_LEN, VERSION_STRING}, error::RosError};
 use url::Url;
 
 #[derive()]
@@ -23,7 +23,7 @@ impl Bag {
         Ok(Bag {
             bag_meta: OnceCell::new(),
             bag_header,
-            cursor: cursor,
+            cursor,
         })
     }
 
@@ -40,14 +40,6 @@ impl Bag {
         let obj_meta = obj_store.head(&obj_path).await?;
 
         Bag::try_new_from_object_store_meta(Arc::new(Box::new(obj_store)), obj_meta).await
-    }
-
-    pub async fn test_read(&self) -> Result<()> {
-        let bag_header = read_bag_header(&self.cursor).await?;
-
-        println!("Index pos: {}", bag_header.index_pos());
-
-        Ok(())
     }
 
     pub async fn connections_by_topic(&self) -> Result<&HashMap<String, Vec<Connection>>> {
@@ -67,7 +59,7 @@ impl Bag {
     async fn borrow_meta(&self) -> &Meta {
         let meta = self.bag_meta.get_or_try_init(
             || async {
-                let index_pos = self.bag_header.index_pos() as usize;
+                let index_pos = self.bag_header._index_pos as usize;
                 Meta::try_new_from_bytes(self.cursor.read_bytes(index_pos, self.cursor.len() - index_pos).await?)
             }
         ).await;
@@ -77,6 +69,39 @@ impl Bag {
         }
 
         meta.unwrap()
+    }
+
+    pub async fn test(&self) -> Result<()> {
+        let bag_header_data_len = self.cursor.read_u32(self.bag_header._data_pos).await? as usize;
+        let mut pos = self.bag_header._data_pos + 4 + bag_header_data_len;
+
+        // Bag bounds 1630169773_000_000_000u64 to 1630169785_000_000_000u64
+        let start_ts = 1630169773_000_000_000u64;
+        let end_ts = 1630169786_000_000_000u64;
+
+        let chunk_positions = self.borrow_meta().await.filter_chunks(None, Some(start_ts), Some(end_ts))?;
+
+        println!("Chunk positions: {} / {}", chunk_positions.len(), self.borrow_meta().await.chunk_infos.len());
+
+
+        // while pos < self.cursor.len() {
+        //     let header_bytes = self.cursor.read_chunk(pos).await.unwrap();
+        //     let header_len = header_bytes.len();
+        //     let data_pos = pos + 4 + header_len;
+        //     let record_with_header = parse_header_bytes(data_pos, header_bytes).unwrap();
+
+
+        //     if let record::Record::Chunk(c) = record_with_header {
+        //         let chunk_bytes = c.decompress(self.cursor.read_chunk(data_pos).await?)?;
+
+        //         println!("ChunkData: {}", chunk_bytes.len());
+        //     }
+
+        //     let data_len = self.cursor.read_u32(data_pos).await.unwrap() as usize;
+        //     pos += 4 + header_len + 4 + data_len;
+        // }
+
+        Ok(())
     }
 }
 

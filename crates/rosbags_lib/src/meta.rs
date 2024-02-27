@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::{cmp::{max, min}, collections::{HashMap, HashSet}};
 
 use bytes::Bytes;
 use anyhow::Result;
 
-use crate::{iterators::RecordBytesIterator, records::{record::Record, connection::{Connection, ConnectionData}, chunk_info::ChunkInfo}, error::RosError};
+use crate::{iterators::RecordBytesIterator, records::{record::Record, connection::{Connection, ConnectionData}, chunk_info::ChunkInfo, chunk}, error::RosError};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Meta {
@@ -13,7 +13,6 @@ pub(crate) struct Meta {
 
 impl Meta {
     pub(crate) fn try_new_from_bytes(bytes: Bytes) -> Result<Self> {
-        println!("Num bytes: {}", bytes.len());
         let mut topic_to_connections = HashMap::new();
         let mut chunk_infos = Vec::new();
 
@@ -39,5 +38,40 @@ impl Meta {
             topic_to_connections,
             chunk_infos,
         })
+    }
+
+    pub(crate) fn filter_chunks(&self, topics: Option<&Vec<String>>, start_time: Option<u64>, end_time: Option<u64>) -> Result<Vec<u32>> {
+        let connections: Option<HashSet<u32>> = topics.map(|topics|
+            topics.iter()
+                // NOTE: Line below silently ignores not matching topics
+                .filter_map(|topic| self.topic_to_connections.get(topic))
+                .flat_map(|cons| cons.iter().map(|c| c._conn))
+                .collect()
+        );
+
+        // Filter chunks
+        let chunk_infos: Vec<u32> = self.chunk_infos.iter().filter_map(|chunk_info| {
+            if let Some(cons) = &connections {
+                if !chunk_info.contains_connections(cons) {
+                    return None;
+                }
+            }
+
+            if let Some(start_time) = start_time {
+                if start_time > chunk_info._end_time {
+                    return None;
+                }
+            }
+
+            if let Some(end_time) = end_time {
+                if end_time < chunk_info._start_time {
+                    return None;
+                }
+            }
+
+            Some(chunk_info._chunk_pos)
+        }).collect();
+
+        Ok(chunk_infos)
     }
 }

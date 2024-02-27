@@ -7,12 +7,10 @@ use rosbags_lib;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("Hello, world!");
-
     let args = Args::parse();
 
     let bag = rosbags_lib::Bag::try_from_path(args.bag_path).await?;
-    bag.connections_by_topic().await?;
+    bag.test().await?;
 
     Ok(())
 }

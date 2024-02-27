@@ -1,15 +1,17 @@
 use anyhow::{self, Result};
 use byteorder::{ByteOrder, LE};
+use bytes::Bytes;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, cell::OnceCell};
 use crate::{error::RosError, utils::read_ros_time};
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct MessageData {
-    _data_pos: usize,
-    _conn: u32,
-    _time: u64,
+    pub(crate) _data_pos: usize,
+    pub(crate) _conn: u32,
+    pub(crate) _time: u64,
 
+    pub(crate) data: Option<Bytes>,
 }
 
 impl MessageData {
@@ -21,6 +23,19 @@ impl MessageData {
             _data_pos: data_pos,
             _conn,
             _time,
+            data: None,
         })
+    }
+
+    pub fn record_data(&mut self, data: Bytes) -> Result<()> {
+        match &self.data {
+            None => {
+                self.data = Some(data);
+                Ok(())
+            },
+            Some(_x) => {
+                Err(anyhow::anyhow! { "Tried to reinitialize MessageData data field."})
+            }
+        }
     }
 }

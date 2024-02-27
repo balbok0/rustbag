@@ -1,9 +1,14 @@
 use anyhow::{self, Result};
 use byteorder::{ByteOrder, LE};
+use bytes::Bytes;
+use bzip2;
+use lz4_flex;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use crate::error::RosError;
+use crate::{error::RosError, iterators::RecordBytesIterator, records::record::Record};
+
+use super::{message_data::MessageData, connection::Connection};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Compression {
@@ -35,5 +40,82 @@ impl Chunk {
             _size,
         })
     }
+
+    pub fn decompress(&self, bytes: Bytes) -> Result<Bytes> {
+        let decompressed_bytes = match self._compression {
+            Compression::BZ2 => {
+                let mut decompress_bytes = Vec::with_capacity(self._size as usize);
+                let mut decompress_obj = bzip2::Decompress::new(false);
+                decompress_obj.decompress_vec(&bytes, &mut decompress_bytes)?;
+                Bytes::from(decompress_bytes)
+            },
+            Compression::LZ4 => {
+                let mut decompress_bytes = Vec::with_capacity(self._size as usize);
+                lz4_flex::block::decompress_into(&bytes, &mut decompress_bytes)?;
+                Bytes::from(decompress_bytes)
+            },
+            Compression::None => {
+                bytes.into()
+            }
+        };
+
+        Ok(decompressed_bytes)
+    }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ChunkData {
+    pub(crate) message_datas: Vec<MessageData>,
+}
+
+impl ChunkData {
+    pub(crate) fn try_from_bytes_all(bytes: Bytes) -> Result<Self> {
+        let mut message_datas = Vec::new();
+        for (record, _data_bytes) in RecordBytesIterator::new(bytes) {
+            match record {
+                Record::MessageData(mut x) => {
+                    x.record_data(_data_bytes)?;
+                    message_datas.push(x)
+                },
+                Record::Connection(_x) => (), // Ignore connections
+                _ => return Err(RosError::UnexpectedChunkSectionRecord("ChunkData: Got record type that is not MessageData or Connection.").into())
+            }
+        }
+        Ok(ChunkData { message_datas })
+    }
+
+    pub(crate) fn try_from_bytes_with_con_check(bytes: Bytes, valid_cons: HashSet<u32>) -> Result<Self> {
+        let mut message_datas = Vec::new();
+        for (record, _data_bytes) in RecordBytesIterator::new(bytes) {
+            match record {
+                Record::MessageData(mut x) => {
+                    if valid_cons.contains(&x._conn) {
+                        x.record_data(_data_bytes)?;
+                        message_datas.push(x)
+                    }
+                },
+                Record::Connection(_x) => (), // Ignore connections
+                _ => return Err(RosError::UnexpectedChunkSectionRecord("ChunkData: Got record type that is not MessageData or Connection.").into())
+            }
+        }
+        Ok(ChunkData { message_datas })
+    }
+
+    pub(crate) fn try_from_bytes_with_con_time_check(bytes: Bytes, valid_cons: HashSet<u32>, start_time: u64, stop_time: u64) -> Result<Self> {
+        let mut message_datas = Vec::new();
+        for (record, _data_bytes) in RecordBytesIterator::new(bytes) {
+            match record {
+                Record::MessageData(mut x) => {
+                    if valid_cons.contains(&x._conn) && start_time <= x._time && x._time <= stop_time {
+                        x.record_data(_data_bytes)?;
+                        message_datas.push(x)
+                    }
+                },
+                Record::Connection(_x) => (), // Ignore connections
+                _ => return Err(RosError::UnexpectedChunkSectionRecord("ChunkData: Got record type that is not MessageData or Connection.").into())
+            }
+        }
+         Ok(ChunkData { message_datas })
+    }
+
+}

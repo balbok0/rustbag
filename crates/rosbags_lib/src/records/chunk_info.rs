@@ -2,7 +2,7 @@ use anyhow::{self, Result};
 use byteorder::{ByteOrder, LE};
 use bytes::Bytes;
 
-use std::{collections::HashMap, cell::OnceCell};
+use std::{collections::{HashMap, HashSet}, cell::OnceCell};
 
 use crate::{error::RosError, utils::read_ros_time, cursor::BytesCursor};
 
@@ -53,6 +53,17 @@ impl ChunkInfo {
         }
 
         Ok(result)
+    }
+
+    pub(crate) fn contains_connections(&self, connections: &HashSet<u32>) -> bool {
+        self.data.get().map(|entries| {
+            for data_entry in entries.iter() {
+                if connections.contains(&data_entry._conn) {
+                    return true;
+                }
+            }
+            false
+        }).unwrap_or(false)
     }
 }
 

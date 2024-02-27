@@ -7,10 +7,10 @@ use crate::error::RosError;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct BagHeader {
-    _data_pos: usize,
-    _index_pos: u64,
-    _conn_count: u32,
-    _chunk_count: u32,
+    pub(crate) _data_pos: usize,
+    pub(crate) _index_pos: u64,
+    pub(crate) _conn_count: u32,
+    pub(crate) _chunk_count: u32,
 }
 
 impl BagHeader {
@@ -25,9 +25,5 @@ impl BagHeader {
             _conn_count,
             _chunk_count,
         })
-    }
-
-    pub fn index_pos(&self) -> u64 {
-        self._index_pos
     }
 }

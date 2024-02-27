@@ -27,3 +27,9 @@ impl IndexData {
         })
     }
 }
+
+
+pub(crate) struct IndexDataEntry {
+    time: u64,
+    count: u32,
+}

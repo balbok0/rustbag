@@ -1,9 +1,7 @@
-use std::collections::HashMap;
+use anyhow::Result;
+use bytes::Bytes;
 
-use anyhow::{anyhow, Result};
-use bytes::{Bytes, Buf};
-
-use crate::{cursor::BytesCursor, error::RosError, utils::parse_bytes_into_field_map};
+use crate::{error::RosError, utils::parse_bytes_into_field_map};
 
 use super::{bag_header::BagHeader, chunk::Chunk, chunk_info::ChunkInfo, connection::Connection, message_data::MessageData, index_data::IndexData};
 

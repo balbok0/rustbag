@@ -1,20 +1,23 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use crate::{data_type::DataType, msg::MsgType, parse_msg::FieldLine, traits::MaybeSized};
+use bytes::Bytes;
+use crate::{data_type::DataType, msg_type::MsgType, msg_value::FieldValue, parse_msg::FieldLine, traits::{MaybeSized, ParseBytes}};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
     field_name: String,
     field_type: DataType,
+    pub(crate) idx: usize,
 }
 
 impl Field {
-    pub(crate) fn try_from_field_line(msg_def_cache: &mut HashMap<String, MsgType>, value: &FieldLine, namespace: &str) -> Result<Self> {
+    pub(crate) fn try_from_field_line(msg_def_cache: &mut HashMap<String, MsgType>, value: &FieldLine, namespace: &str, idx: usize) -> Result<Self> {
         let field_type = DataType::try_from_string(msg_def_cache,&value.field_type, namespace)?;
         Ok(Field {
             field_name: value.field_name.clone(),
             field_type,
+            idx,
         })
     }
 }
@@ -22,5 +25,25 @@ impl Field {
 impl MaybeSized for Field {
     fn known_size(&self) -> Option<usize> {
         self.field_type.known_size()
+    }
+}
+
+impl PartialOrd for Field {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        // Ordering is only on index
+        self.idx.partial_cmp(&other.idx)
+    }
+}
+
+impl Ord for Field {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Ordering is only on index
+        self.idx.cmp(&other.idx)
+    }
+}
+
+impl ParseBytes for Field {
+    fn try_parse(&self, bytes: &[u8]) -> Result<(usize, FieldValue)> {
+        Ok(self.field_type.try_parse(&bytes)?)
     }
 }

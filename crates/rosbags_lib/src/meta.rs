@@ -3,7 +3,7 @@ use std::{collections::{HashMap, HashSet}, cell::OnceCell, borrow::Borrow};
 use bytes::Bytes;
 use anyhow::Result;
 use ros_message::DynamicMsg;
-use ros_msg::{self, msg::MsgType};
+use ros_msg::{self, msg_type::MsgType};
 
 use crate::{iterators::RecordBytesIterator, records::{record::Record, connection::{Connection, ConnectionData}, chunk_info::ChunkInfo, chunk}, error::RosError};
 

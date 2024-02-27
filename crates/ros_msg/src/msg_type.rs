@@ -1,6 +1,9 @@
 use std::{cell::OnceCell, collections::HashMap};
+use itertools::Itertools;
+use bytes::Bytes;
 
-use crate::{const_field::ConstField, field::Field, parse_msg::MsgLine, traits::MaybeSized};
+
+use crate::{const_field::ConstField, field::Field, msg_value::{FieldValue, MsgValue}, parse_msg::MsgLine, traits::{MaybeSized, ParseBytes}};
 use anyhow::Result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,13 +19,13 @@ impl MsgType {
         let mut constants = HashMap::new();
         let mut fields = HashMap::new();
 
-        for line in parsed_lines {
+        for (field_idx, line) in parsed_lines.iter().enumerate() {
             match line {
                 MsgLine::Const(const_line) => {
                     constants.insert(const_line.const_name.clone(), ConstField::try_from(const_line)?);
                 },
                 MsgLine::Field(field_line) => {
-                    fields.insert(field_line.field_name.clone(), Field::try_from_field_line(msg_def_cache, field_line, namespace)?);
+                    fields.insert(field_line.field_name.clone(), Field::try_from_field_line(msg_def_cache, field_line, namespace, field_idx)?);
                 }
             }
         }
@@ -41,5 +44,19 @@ impl MaybeSized for MsgType {
 
             Some(total_size)
         })
+    }
+}
+
+impl ParseBytes for MsgType {
+    fn try_parse(&self, bytes: &[u8]) -> Result<(usize, FieldValue)> {
+        let mut cur_idx = 0usize;
+        for (field_name, field) in self.fields.iter().sorted_by_key(|(_, f)| f.idx) {
+            println!("Field: {field:?}");
+            let (field_len, field_val) = field.try_parse(&bytes[cur_idx..])?;
+            cur_idx += field_len;
+            println!("Field val: {field_val:?}");
+        }
+
+        Ok((cur_idx, FieldValue::Msg(MsgValue { })))
     }
 }

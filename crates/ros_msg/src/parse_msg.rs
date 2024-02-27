@@ -4,7 +4,7 @@ use anyhow::Result;
 use regex::{Regex, RegexBuilder};
 use lazy_static::lazy_static;
 
-use crate::msg::MsgType;
+use crate::msg_type::MsgType;
 
 lazy_static! {
     static ref MSG_SPLIT_REGEX: Regex = RegexBuilder::new("^=+$")

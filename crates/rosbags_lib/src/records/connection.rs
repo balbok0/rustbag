@@ -1,6 +1,7 @@
 use anyhow::{self, Result};
 use byteorder::{ByteOrder, LE};
 use bytes::Bytes;
+use ros_msg::msg::MsgType;
 
 use std::{collections::HashMap, cell::OnceCell};
 
@@ -62,8 +63,7 @@ impl ConnectionData {
         })
     }
 
-    pub fn parse_def(&self) -> Result<()> {
-        ros_msg::parse_msg::parse_con_msg_def(&self._message_definition)?;
-        Ok(())
+    pub fn parse_def(&self, msg_def_cache: &mut HashMap<String, MsgType>) -> Result<MsgType> {
+        ros_msg::parse_msg::parse_con_msg_def(self._type.as_str(), msg_def_cache, &self._message_definition)
     }
 }

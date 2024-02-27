@@ -2,15 +2,15 @@ use std::{collections::{HashMap, HashSet}, cell::OnceCell, borrow::Borrow};
 
 use bytes::Bytes;
 use anyhow::Result;
-use ros_message::{DynamicMsg, LazyFlatDynamicMsg};
-use ros_msg;
+use ros_message::DynamicMsg;
+use ros_msg::{self, msg::MsgType};
 
 use crate::{iterators::RecordBytesIterator, records::{record::Record, connection::{Connection, ConnectionData}, chunk_info::ChunkInfo, chunk}, error::RosError};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Meta {
     pub(crate) topic_to_connections: HashMap<String, Vec<Connection>>,
-    connection_id_to_message: OnceCell<HashMap<u32, DynamicMsg>>,
+    connection_id_to_message: OnceCell<HashMap<u32, MsgType>>,
     pub(crate) chunk_infos: Vec<ChunkInfo>,
 }
 
@@ -81,16 +81,25 @@ impl Meta {
         Ok(chunk_infos)
     }
 
-    pub(crate) fn borrow_connection_to_id_message(&self) -> &HashMap<u32, DynamicMsg> {
+    pub(crate) fn borrow_connection_to_id_message(&self) -> &HashMap<u32, MsgType> {
+        let mut msg_def_cache = HashMap::new();
         self.connection_id_to_message.get_or_init(|| {
             let mut connection_id_to_message = HashMap::new();
 
-            for con in self.topic_to_connections.values().into_iter().flatten() {
+            // NOTE: Connections have to be sorted, since definitions for subtypes sometimes only appear in previous messages
+            let mut cons: Vec<_> = self.topic_to_connections
+                .values()
+                .into_iter()
+                .flatten()
+                .collect();
+            cons.sort_by_key(|con| con._conn);
+
+            for con in cons {
                 let con_data = con.data.get().unwrap(); // Note it exists, since we create it in new
 
-                con_data.parse_def().unwrap();
+                let msg = con_data.parse_def(&mut msg_def_cache).unwrap();
                 // println!("\nMessage Definition: {}\n\n\n", con_data._message_definition);
-                let msg = DynamicMsg::new(con_data._type.as_str().into(), con_data._message_definition.as_str()).unwrap();
+                // let msg = DynamicMsg::new(con_data._type.as_str().into(), con_data._message_definition.as_str()).unwrap();
                 // LazyFlatDynamicMsg::try_from(&msg).unwrap();
 
                 // TODO: DynamicMsg is very slow to decode. I believe this is because of it's nested-ness.

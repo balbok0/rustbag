@@ -5,3 +5,4 @@ pub mod msg_type;
 pub mod msg_value;
 pub mod parse_msg;
 pub mod traits;
+pub mod error;

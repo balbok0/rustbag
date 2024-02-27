@@ -1,6 +1,5 @@
 use std::{cell::OnceCell, collections::HashMap};
 use itertools::Itertools;
-use bytes::Bytes;
 
 
 use crate::{const_field::ConstField, field::Field, msg_value::{FieldValue, MsgValue}, parse_msg::MsgLine, traits::{MaybeSized, ParseBytes}};
@@ -71,13 +70,18 @@ impl MaybeSized for MsgType {
 impl ParseBytes for MsgType {
     fn try_parse(&self, bytes: &[u8]) -> Result<(usize, FieldValue)> {
         let mut cur_idx = 0usize;
+        let mut field_vals = HashMap::new();
         for (field_name, field) in self.fields.iter().sorted_by_key(|(_, f)| f.idx) {
             // println!("Field: {field:?}");
             let (field_len, field_val) = field.try_parse(&bytes[cur_idx..])?;
             cur_idx += field_len;
             // println!("Field val: {field_val:?}");
+            field_vals.insert(field_name.clone(), field_val);
         }
 
-        Ok((cur_idx, FieldValue::Msg(MsgValue { })))
+        Ok((cur_idx, FieldValue::Msg(MsgValue::new(
+            self.constants.clone(),
+            field_vals,
+        ))))
     }
 }

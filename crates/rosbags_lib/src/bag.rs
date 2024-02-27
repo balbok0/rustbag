@@ -12,19 +12,18 @@ use url::Url;
 #[derive()]
 pub struct Bag {
     bag_meta: OnceCell<Meta>,
-    bag_header: BagHeader,
+    bag_header: OnceCell<BagHeader>,
     cursor: Cursor,
 }
 
 
 impl Bag {
-    pub async fn try_new_from_object_store_meta(object_store: Arc<Box<dyn ObjectStore>>, object_meta: ObjectMeta) -> Result<Self> {
+    pub fn try_new_from_object_store_meta(object_store: Arc<Box<dyn ObjectStore>>, object_meta: ObjectMeta) -> Result<Self> {
         let cursor = Cursor::new(object_store, object_meta);
 
-        let bag_header = read_bag_header(&cursor).await?;
         Ok(Bag {
             bag_meta: OnceCell::new(),
-            bag_header,
+            bag_header: OnceCell::new(),
             cursor,
         })
     }
@@ -33,7 +32,7 @@ impl Bag {
         let (obj_store, object_path) = object_store::parse_url(url)?;
         let object_meta = obj_store.head(&object_path).await?;
 
-        Bag::try_new_from_object_store_meta(Arc::new(obj_store), object_meta).await
+        Bag::try_new_from_object_store_meta(Arc::new(obj_store), object_meta)
     }
 
     pub async fn try_from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -41,7 +40,7 @@ impl Bag {
         let obj_path = object_store::path::Path::from_filesystem_path(path)?;
         let obj_meta = obj_store.head(&obj_path).await?;
 
-        Bag::try_new_from_object_store_meta(Arc::new(Box::new(obj_store)), obj_meta).await
+        Bag::try_new_from_object_store_meta(Arc::new(Box::new(obj_store)), obj_meta)
     }
 
     pub async fn connections_by_topic(&self) -> Result<&HashMap<String, Vec<Connection>>> {
@@ -58,10 +57,16 @@ impl Bag {
         topics
     }
 
+    async fn borrow_bag_header(&self) -> Result<&BagHeader> {
+        self.bag_header.get_or_try_init(|| async {
+            read_bag_header(&self.cursor).await
+        }).await
+    }
+
     async fn borrow_meta(&self) -> &Meta {
         let meta = self.bag_meta.get_or_try_init(
             || async {
-                let index_pos = self.bag_header._index_pos as usize;
+                let index_pos = self.borrow_bag_header().await?._index_pos as usize;
                 Meta::try_new_from_bytes(self.cursor.read_bytes(index_pos, self.cursor.len() - index_pos).await?)
             }
         ).await;

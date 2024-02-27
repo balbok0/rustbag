@@ -5,5 +5,5 @@ use clap::Parser;
 #[command(author, version, about, long_about = None)]
 pub(crate) struct Args {
     /// Path to bag
-    bag_path: String,
+    pub(crate) bag_path: String,
 }

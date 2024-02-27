@@ -107,7 +107,7 @@ impl Bag {
                 for message_data in chunk_data.message_datas {
                     // println!("Message Data conn: {} Data len: {:?}", message_data._conn, &message_data.data.map(|d| d.len()));
                     // WARN: Slow!
-                    let msg = dyn_msg_map.get(&message_data._conn).unwrap().decode(message_data.data.unwrap().reader())?;
+                    // let msg = dyn_msg_map.get(&message_data._conn).unwrap().decode(message_data.data.unwrap().reader())?;
                 }
 
                 // println!("ChunkData: {}", chunk_bytes.len());

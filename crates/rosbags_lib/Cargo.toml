@@ -23,3 +23,6 @@ url = "2.5.0"
 
 [dependencies.ros_message]
 path = "../ros_message"
+
+[dependencies.ros_msg]
+path = "../ros_msg"

@@ -1,7 +1,10 @@
+use std::collections::HashMap;
+
 use rosbags_lib::Bag as RustBag;
 use pyo3::prelude::*;
 
 use tokio::runtime::Runtime;
+use url::Url;
 
 use crate::msg_iter::PythonMessageIter;
 
@@ -19,6 +22,7 @@ impl Bag {
     pub fn new<'p>(
         _py: Python<'p>,
         bag_uri: &str,
+        options: Option<HashMap<&str, String>>
     ) -> Self {
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -27,7 +31,7 @@ impl Bag {
             .unwrap();
 
         let inner = runtime.block_on(async {
-            RustBag::try_from_path(bag_uri).await.unwrap()
+            RustBag::try_new_from_url(&Url::parse(bag_uri).unwrap(), options).await.unwrap()
         });
 
         Self {

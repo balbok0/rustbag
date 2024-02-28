@@ -42,12 +42,22 @@ impl Bag {
         })
     }
 
-    pub async fn try_new_from_url(url: &Url) -> Result<Self> {
-        let (obj_store, object_path) = object_store::parse_url(url)?;
+    pub async fn try_new_from_url<I, K, V>(url: &Url, options: Option<I>) -> Result<Self>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: Into<String>,
+    {
+        let (obj_store, object_path) = options.map(|opts| {
+            object_store::parse_url_opts(url, opts)
+        }).unwrap_or_else(|| {
+            object_store::parse_url(url)
+        })?;
         let object_meta = obj_store.head(&object_path).await?;
 
         Bag::try_new_from_object_store_meta(Arc::new(obj_store), object_meta)
     }
+
 
     pub async fn try_from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
         let obj_store = object_store::local::LocalFileSystem::new();

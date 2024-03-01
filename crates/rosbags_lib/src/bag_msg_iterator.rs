@@ -3,12 +3,12 @@ use std::collections::{BinaryHeap, HashMap, VecDeque};
 use anyhow::{self, Result};
 use ros_msg::{
     msg_type::MsgType,
-    msg_value::{FieldValue},
+    msg_value::FieldValue,
     traits::ParseBytes as _,
 };
 use tokio::{
     runtime::Runtime,
-    sync::mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender},
+    sync::mpsc::{Receiver, Sender},
     task::JoinSet,
 };
 
@@ -23,7 +23,7 @@ use crate::{
 
 pub struct BagMessageIterator {
     _runtime: Runtime,
-    message_reader: UnboundedReceiver<Option<Vec<MsgIterValue>>>,
+    message_reader: Receiver<Option<Vec<MsgIterValue>>>,
     msg_queue: VecDeque<MsgIterValue>,
 }
 
@@ -33,9 +33,9 @@ pub(super) async fn start_parse_msgs(
     con_to_msg: HashMap<u32, MsgType>,
     start: u64,
     end: u64,
-    message_sender: UnboundedSender<Option<Vec<MsgIterValue>>>,
+    message_sender: Sender<Option<Vec<MsgIterValue>>>,
 ) {
-    let (tx, chunk_result_recv) = tokio::sync::mpsc::channel(100);
+    let (tx, chunk_result_recv) = tokio::sync::mpsc::channel(10);
 
     let sorted_fut = tokio::spawn(async move {
         order_parsed_messaged(chunk_result_recv, message_sender)
@@ -106,7 +106,7 @@ pub(super) async fn start_parse_msgs(
 
 async fn order_parsed_messaged(
     mut chunk_result_recv: Receiver<(usize, Vec<MsgIterValue>)>,
-    sorted_result_sender: UnboundedSender<Option<Vec<MsgIterValue>>>,
+    sorted_result_sender: Sender<Option<Vec<MsgIterValue>>>,
 ) -> Result<()> {
     let mut next_idx = 0;
 
@@ -209,7 +209,7 @@ impl BagMessageIterator {
             .build()
             .unwrap();
 
-        let (message_sender, message_reader) = tokio::sync::mpsc::unbounded_channel();
+        let (message_sender, message_reader) = tokio::sync::mpsc::channel(10);
         runtime.spawn(start_parse_msgs(
             bag,
             chunk_infos,

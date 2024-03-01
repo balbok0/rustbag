@@ -1,9 +1,19 @@
-from typing import List, Optional, Iterator
+from typing import Dict, List, Optional, Iterator
 
 class Bag:
-    def __init__(bag_uri: str):
+    def __init__(bag_uri: str, storage_options: Optional[Dict[str, str]] = None):
         """
         Creates a new Bag object from a URI.
+
+        Args:
+            bag_uri (str): A URI string pointing to a bag, should start with either:
+                - "file://"
+                - "http://"
+                - "https://"
+            storage_options (Optional[Dict[str, str]], optional): Storage options to use when reading URI.
+                For allowed keys/values see [object_store docs](https://docs.rs/object_store/0.9.0/object_store/aws/enum.AmazonS3ConfigKey.html)
+                (or similar page for non-S3 storage).
+                Defaults to None, i.e. default object store configuration is used.
         """
         ...
 
@@ -30,8 +40,7 @@ class Bag:
         ...
 
     def num_messages(self) -> int:
-        """_summary_
-
+        """
         Returns:
             int: Number of messages in a bag
         """

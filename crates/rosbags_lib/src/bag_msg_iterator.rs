@@ -20,11 +20,32 @@ use crate::{
     }, Bag
 };
 
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub struct BagMessageIteratorConfig {
+    pub num_threads: u32,
+}
 
+impl Default for BagMessageIteratorConfig {
+    fn default() -> Self {
+        Self { num_threads: 4 }
+    }
+}
+
+impl From<HashMap<String, String>> for BagMessageIteratorConfig {
+    fn from(value: HashMap<String, String>) -> Self {
+        BagMessageIteratorConfig {
+            num_threads: value.get("num_threads").map(|v| v.parse().unwrap()).unwrap_or(4)
+        }
+    }
+}
+
+
+#[derive(Debug)]
 pub struct BagMessageIterator {
     _runtime: Runtime,
     message_reader: Receiver<Option<Vec<MsgIterValue>>>,
     msg_queue: VecDeque<MsgIterValue>,
+    config: BagMessageIteratorConfig,
 }
 
 pub(super) async fn start_parse_msgs(
@@ -118,14 +139,14 @@ async fn order_parsed_messaged(
             Ok((chunk_idx, msg_vals)) => {
                 if chunk_idx == next_idx {
                     next_idx += 1;
-                    sorted_result_sender.send(Some(msg_vals)).unwrap();
+                    sorted_result_sender.send(Some(msg_vals)).await.unwrap();
                 } else {
                     parsed_ooo_chunks.push((-(chunk_idx as i64), msg_vals))
                 }
             }
             Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}
             Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                sorted_result_sender.send(None).unwrap();
+                sorted_result_sender.send(None).await.unwrap();
                 break;
             }
         }
@@ -137,7 +158,7 @@ async fn order_parsed_messaged(
                     if -chunk_idx as usize == next_idx {
                         let (_, msg_vals) = parsed_ooo_chunks.pop().unwrap();
                         next_idx += 1;
-                        sorted_result_sender.send(Some(msg_vals)).unwrap();
+                        sorted_result_sender.send(Some(msg_vals)).await.unwrap();
                     } else {
                         break;
                     }
@@ -199,7 +220,7 @@ async fn parse_chunk(
 }
 
 impl BagMessageIterator {
-    pub(crate) fn new(bag: Bag, meta: Meta, start: u64, end: u64, chunk_infos: Vec<ChunkInfo>) -> Self {
+    pub(crate) fn new(bag: Bag, meta: Meta, start: u64, end: u64, chunk_infos: Vec<ChunkInfo>, config: BagMessageIteratorConfig) -> Self {
         let con_to_msg = meta.borrow_connection_to_id_message();
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -223,6 +244,7 @@ impl BagMessageIterator {
             _runtime: runtime,
             message_reader,
             msg_queue: VecDeque::new(),
+            config
         };
 
         s

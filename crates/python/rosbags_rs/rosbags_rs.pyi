@@ -17,7 +17,7 @@ class Bag:
         """
         ...
 
-    def read_messages(self, topics: Optional[List[str]] = None, start: Optional[int] = None, end: Optional[int] = None) -> Iterator:
+    def read_messages(self, topics: Optional[List[str]] = None, start: Optional[int] = None, end: Optional[int] = None, config: Optional[Dict[str, str]] = None) -> Iterator:
         """
         Reads messages from the bag. Messages are almost guaranteed to be ordered in time.
 
@@ -30,6 +30,9 @@ class Bag:
                 Defaults to None (start of the bag).
             end (Optional[int], optional): Time at which to stop reading.
                 Defaults to None (end of the bag).
+            config (Optional[Dict[str, str]]): Configuration of the reader.
+                Currently allowed keys are: "num_threads".
+                Defaults to None (Default configuration).
 
         Yields:
             Iterator: Iterator through tuples of:

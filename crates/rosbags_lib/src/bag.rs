@@ -9,15 +9,11 @@ use object_store::{ObjectMeta, ObjectStore};
 use tokio::sync::OnceCell;
 
 use crate::{
-    constants::{VERSION_LEN, VERSION_STRING},
-    cursor::Cursor,
-    error::RosError,
-    meta::Meta,
-    records::{
+    bag_msg_iterator::BagMessageIteratorConfig, constants::{VERSION_LEN, VERSION_STRING}, cursor::Cursor, error::RosError, meta::Meta, records::{
         bag_header::BagHeader,
         connection::Connection,
         record::{parse_header_bytes, Record},
-    }, BagMessageIterator,
+    }, BagMessageIterator
 };
 use url::Url;
 
@@ -112,6 +108,7 @@ impl Bag {
         topics: Option<Vec<String>>,
         start: Option<u64>,
         end: Option<u64>,
+        config: BagMessageIteratorConfig,
     ) -> BagMessageIterator {
         let meta = self.borrow_meta().await;
         let start = start
@@ -131,6 +128,7 @@ impl Bag {
             start,
             end,
             chunk_infos.into_iter().cloned().collect(),
+            config,
         );
 
         iter

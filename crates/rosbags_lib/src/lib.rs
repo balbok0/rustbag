@@ -1,5 +1,5 @@
 pub mod bag;
-mod bag_msg_iterator;
+pub mod bag_msg_iterator;
 mod constants;
 mod cursor;
 mod error;

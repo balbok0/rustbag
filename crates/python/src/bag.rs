@@ -40,10 +40,10 @@ impl Bag {
         }
     }
 
-    pub fn read_messages(slf: PyRef<'_, Self>, topics: Option<Vec<String>>, start: Option<u64>, end: Option<u64>) -> PyResult<Py<PythonMessageIter>> {
+    pub fn read_messages(slf: PyRef<'_, Self>, topics: Option<Vec<String>>, start: Option<u64>, end: Option<u64>, config: Option<HashMap<String, String>>) -> PyResult<Py<PythonMessageIter>> {
         let bag_iter = slf.runtime.block_on(
             async {
-                slf.inner.read_messages(topics, start, end).await
+                slf.inner.read_messages(topics, start, end, config.map(|c| c.into()).unwrap_or_default()).await
             }
         );
         let python_iter = PythonMessageIter {

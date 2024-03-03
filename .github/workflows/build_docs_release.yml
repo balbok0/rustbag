@@ -3,7 +3,7 @@ name: Generate [version] documentation
 on:
   push:
     branches:
-    - feature/add-docs
+    - 'v*.*'
 
 jobs:
   build_docs:

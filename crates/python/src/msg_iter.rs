@@ -1,4 +1,4 @@
-use rosbags_lib::BagMessageIterator;
+use rustbag::BagMessageIterator;
 use pyo3::prelude::*;
 
 use crate::types::MsgIterValue;

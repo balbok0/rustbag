@@ -1,11 +1,11 @@
 [package]
-name = "rosbags-python"
+name = "rustbag-python"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
-name = "rosbags_rs"
+name = "rustbag"
 crate-type = ["cdylib"]
 doc = false
 
@@ -13,7 +13,7 @@ doc = false
 pyo3 = { version = "0.20.2", features = ["anyhow", "extension-module"] }
 pyo3-asyncio = { version = "0.20.0", features = ["tokio-runtime"] }
 ros_msg = { path = "../ros_msg", features = ["python"]}
-rosbags_lib = { path = "../rosbags_lib", features = ["python"]}
+rustbag = { path = "../rustbag", features = ["python"]}
 tokio = { version = "1.35.1", features = ["full"] }
 url = "2.5.0"
 

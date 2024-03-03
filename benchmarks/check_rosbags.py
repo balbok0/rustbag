@@ -3,19 +3,20 @@ import tqdm
 
 import rosbag
 from rosbags.highlevel import AnyReader
-from rosbags_rs import Bag
+from rustbag import Bag
 from embag import View
 
 bag_name = "20210828_2.bag"
 
-path = Path(__file__).parent.parent / "s3" / bag_name
-bag = Bag(f"s3://test-bags/{bag_name}", {
-    "endpoint": "http://localhost:9000",
-    "access_key_id": "minioadmin",
-    "secret_access_key": "minioadmin",
-    "allow_http": "true",
-})
-for msg in tqdm.tqdm(bag.read_messages(["/odometry/filtered_odom", "/cmd", "/controls"]), desc="rs"):
+path = Path(__file__).parent.parent / "temp" / bag_name
+# bag = Bag(f"s3://test-bags/{bag_name}", {
+#     "endpoint": "http://localhost:9000",
+#     "access_key_id": "minioadmin",
+#     "secret_access_key": "minioadmin",
+#     "allow_http": "true",
+# })
+bag = Bag(f"file://{str(path.absolute())}")
+for msg in tqdm.tqdm(bag.read_messages(), desc="rs"):
     pass
 
 # create reader instance and open for reading

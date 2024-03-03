@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use rosbags_lib::Bag as RustBag;
+use rustbag::Bag as RustBag;
 use pyo3::prelude::*;
 
 use tokio::runtime::Runtime;

@@ -10,7 +10,7 @@ on:
     branches:
       - main
       - master
-      # - v*.*
+      - v*.*
     tags:
       - '*'
   pull_request:
@@ -32,13 +32,15 @@ jobs:
           python-version: '3.10'
       - name: Build wheels
         uses: PyO3/maturin-action@v1
+        working-directory: crates/python
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --working-directory crates/python
+          args: --release --out dist --find-interpreter
           sccache: 'true'
           manylinux: auto
       - name: Upload wheels
         uses: actions/upload-artifact@v3
+        working-directory: crates/python
         with:
           name: wheels
           path: dist
@@ -56,12 +58,14 @@ jobs:
           architecture: ${{ matrix.target }}
       - name: Build wheels
         uses: PyO3/maturin-action@v1
+        working-directory: crates/python
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --working-directory crates/python
+          args: --release --out dist --find-interpreter
           sccache: 'true'
       - name: Upload wheels
         uses: actions/upload-artifact@v3
+        working-directory: crates/python
         with:
           name: wheels
           path: dist
@@ -78,12 +82,14 @@ jobs:
           python-version: '3.10'
       - name: Build wheels
         uses: PyO3/maturin-action@v1
+        working-directory: crates/python
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --working-directory crates/python
+          args: --release --out dist --find-interpreter
           sccache: 'true'
       - name: Upload wheels
         uses: actions/upload-artifact@v3
+        working-directory: crates/python
         with:
           name: wheels
           path: dist
@@ -94,11 +100,13 @@ jobs:
       - uses: actions/checkout@v3
       - name: Build sdist
         uses: PyO3/maturin-action@v1
+        working-directory: crates/python
         with:
           command: sdist
           args: --out dist
       - name: Upload sdist
         uses: actions/upload-artifact@v3
+        working-directory: crates/python
         with:
           name: wheels
           path: dist
@@ -110,12 +118,14 @@ jobs:
     needs: [linux, windows, macos, sdist]
     steps:
       - uses: actions/download-artifact@v3
+        working-directory: crates/python
         with:
           name: wheels
       - name: Publish to PyPI
         uses: PyO3/maturin-action@v1
+        working-directory: crates/python
         env:
           MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         with:
           command: upload
-          args: --non-interactive --skip-existing * --working-directory crates/python
+          args: --non-interactive --skip-existing *

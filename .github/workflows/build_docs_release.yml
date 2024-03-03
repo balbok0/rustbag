@@ -1,0 +1,38 @@
+name: Generate [version] documentation
+
+on:
+  push:
+    branches:
+    - feature/add-docs
+
+jobs:
+  build_docs:
+    name: Generate [version] documentation
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [ 3.8 ]
+
+    steps:
+      - name: Checkout source files
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install Python dependencies
+        run: python3 -m pip install -r ./.ci/docs-requirements.txt
+
+      - name: Configure Git user
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+      - name: Extract branch name
+        shell: bash
+        run: echo "##[set-output name=branch;]$(echo ${GITHUB_REF#refs/heads/})"
+        id: extract_branch
+
+      - name: Deploy with mike 🚀
+        run: |
+          mike deploy --push ${{ steps.extract_branch.outputs.branch }}

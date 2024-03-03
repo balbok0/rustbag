@@ -4,6 +4,21 @@ repo_url: https://github.com/balbok0/rustbag
 
 plugins:
   - search
+  - gen-files:
+      scripts:
+      - .ci/gen_ref_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - section-index
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [crates/python/rustbag]  # search packages in the src folder
+          options:
+            merge_init_into_class: true
+            show_source: false
+
+
 
 markdown_extensions:
   - admonition

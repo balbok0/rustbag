@@ -13,7 +13,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: [crates/python/rustbag]  # search packages in the src folder
+          paths: [crates/python/]  # search packages in the src folder
           options:
             merge_init_into_class: true
             show_source: false

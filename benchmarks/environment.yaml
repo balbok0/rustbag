@@ -1,4 +1,4 @@
-name: benches-rosbags-rs
+name: benches-rustbag
 
 channels:
   - robostack-staging

@@ -1,173 +1,51 @@
-use std::{
-    collections::{BinaryHeap, HashMap, VecDeque},
-    path::Path,
-    sync::Arc,
-};
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 
 use anyhow::{self, Result};
-use object_store::{ObjectMeta, ObjectStore};
 use ros_msg::{
     msg_type::MsgType,
-    msg_value::{FieldValue, MsgValue},
+    msg_value::FieldValue,
     traits::ParseBytes as _,
 };
 use tokio::{
     runtime::Runtime,
-    sync::{
-        mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender},
-        OnceCell,
-    },
+    sync::mpsc::{Receiver, Sender},
     task::JoinSet,
 };
 
 use crate::{
-    constants::{VERSION_LEN, VERSION_STRING},
-    cursor::Cursor,
-    error::RosError,
-    meta::Meta,
-    records::{
-        bag_header::BagHeader,
+    constants::MsgIterValue, error::RosError, meta::Meta, records::{
         chunk::ChunkData,
         chunk_info::ChunkInfo,
-        connection::Connection,
-        record::{self, parse_header_bytes, Record},
-    },
+        record::{self, parse_header_bytes},
+    }, Bag
 };
-use url::Url;
 
-type MsgIterValue = (u64, u32, MsgValue);
-
-#[derive(Debug, Clone)]
-pub struct Bag {
-    bag_meta: OnceCell<Meta>,
-    bag_header: OnceCell<BagHeader>,
-    cursor: Cursor,
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub struct BagMessageIteratorConfig {
+    pub num_threads: u32,
 }
 
-impl Bag {
-    pub fn try_new_from_object_store_meta(
-        object_store: Arc<Box<dyn ObjectStore>>,
-        object_meta: ObjectMeta,
-    ) -> Result<Self> {
-        let cursor = Cursor::new(object_store, object_meta);
-
-        Ok(Bag {
-            bag_meta: OnceCell::new(),
-            bag_header: OnceCell::new(),
-            cursor,
-        })
+impl Default for BagMessageIteratorConfig {
+    fn default() -> Self {
+        Self { num_threads: 4 }
     }
+}
 
-    pub async fn try_new_from_url(url: &Url) -> Result<Self> {
-        let (obj_store, object_path) = object_store::parse_url(url)?;
-        let object_meta = obj_store.head(&object_path).await?;
-
-        Bag::try_new_from_object_store_meta(Arc::new(obj_store), object_meta)
-    }
-
-    pub async fn try_from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let obj_store = object_store::local::LocalFileSystem::new();
-        let obj_path = object_store::path::Path::from_filesystem_path(path)?;
-        let obj_meta = obj_store.head(&obj_path).await?;
-
-        Bag::try_new_from_object_store_meta(Arc::new(Box::new(obj_store)), obj_meta)
-    }
-
-    pub async fn connections_by_topic(&self) -> Result<&HashMap<String, Vec<Connection>>> {
-        let meta = self.borrow_meta().await;
-
-        Ok(&meta.topic_to_connections)
-    }
-
-    pub async fn topics(&self) -> Vec<&String> {
-        let meta = self.borrow_meta().await;
-
-        let topics: Vec<_> = meta.topic_to_connections.keys().collect();
-
-        topics
-    }
-
-    async fn borrow_bag_header(&self) -> Result<&BagHeader> {
-        self.bag_header
-            .get_or_try_init(|| async { read_bag_header(&self.cursor).await })
-            .await
-    }
-
-    async fn borrow_meta(&self) -> &Meta {
-        let meta = self
-            .bag_meta
-            .get_or_try_init(|| async {
-                let index_pos = self.borrow_bag_header().await?._index_pos as usize;
-                Meta::try_new_from_bytes(
-                    self.cursor
-                        .read_bytes(index_pos, self.cursor.len() - index_pos)
-                        .await?,
-                )
-            })
-            .await;
-
-        if meta.is_err() {
-            panic!("Could not read Bag metadata {:#?}", meta)
+impl From<HashMap<String, String>> for BagMessageIteratorConfig {
+    fn from(value: HashMap<String, String>) -> Self {
+        BagMessageIteratorConfig {
+            num_threads: value.get("num_threads").map(|v| v.parse().unwrap()).unwrap_or(4)
         }
-
-        meta.unwrap()
-    }
-
-    pub async fn read_messages(
-        &self,
-        topics: Option<Vec<String>>,
-        start: Option<u64>,
-        end: Option<u64>,
-    ) -> BagMessageIterator {
-        let meta = self.borrow_meta().await;
-        let start = start
-            .map(|v| meta.start_time() + v * 1_000_000_000)
-            .unwrap_or_else(|| meta.start_time());
-        let end = end
-            .map(|v| meta.end_time() + v * 1_000_000_000)
-            .unwrap_or_else(|| meta.end_time());
-
-        let chunk_infos = meta
-            .filter_chunks(topics.as_ref(), Some(start), Some(end))
-            .unwrap();
-
-        let iter = BagMessageIterator::new(
-            self.clone(),
-            meta.clone(),
-            start,
-            end,
-            chunk_infos.into_iter().cloned().collect(),
-        );
-
-        iter
-    }
-
-    pub async fn num_messages(&self) -> u64 {
-        self.borrow_meta().await.num_messages()
     }
 }
 
-// Helper Function
-async fn read_bag_header(cursor: &Cursor) -> Result<BagHeader> {
-    let bag_version_header = cursor.read_bytes(0, VERSION_LEN).await?;
-    if bag_version_header != VERSION_STRING {
-        return Err(RosError::InvalidVersion.into());
-    }
-    let header_bytes = cursor.read_chunk(VERSION_LEN).await?;
-    let data_pos = 4 + header_bytes.len() + VERSION_LEN;
-    let record = parse_header_bytes(data_pos, header_bytes)?;
-    if let Record::BagHeader(bh) = record {
-        Ok(bh)
-    } else {
-        Err(RosError::InvalidHeader("Invalid Bag Header record type.").into())
-    }
-}
 
-// Helper struct for iteration of msgs
+#[derive(Debug)]
 pub struct BagMessageIterator {
     _runtime: Runtime,
-    message_reader: UnboundedReceiver<Option<Vec<MsgIterValue>>>,
+    message_reader: Receiver<Option<Vec<MsgIterValue>>>,
     msg_queue: VecDeque<MsgIterValue>,
+    config: BagMessageIteratorConfig,
 }
 
 pub(super) async fn start_parse_msgs(
@@ -176,9 +54,9 @@ pub(super) async fn start_parse_msgs(
     con_to_msg: HashMap<u32, MsgType>,
     start: u64,
     end: u64,
-    message_sender: UnboundedSender<Option<Vec<MsgIterValue>>>,
+    message_sender: Sender<Option<Vec<MsgIterValue>>>,
 ) {
-    let (tx, chunk_result_recv) = tokio::sync::mpsc::channel(100);
+    let (tx, chunk_result_recv) = tokio::sync::mpsc::channel(10);
 
     let sorted_fut = tokio::spawn(async move {
         order_parsed_messaged(chunk_result_recv, message_sender)
@@ -249,7 +127,7 @@ pub(super) async fn start_parse_msgs(
 
 async fn order_parsed_messaged(
     mut chunk_result_recv: Receiver<(usize, Vec<MsgIterValue>)>,
-    sorted_result_sender: UnboundedSender<Option<Vec<MsgIterValue>>>,
+    sorted_result_sender: Sender<Option<Vec<MsgIterValue>>>,
 ) -> Result<()> {
     let mut next_idx = 0;
 
@@ -261,14 +139,14 @@ async fn order_parsed_messaged(
             Ok((chunk_idx, msg_vals)) => {
                 if chunk_idx == next_idx {
                     next_idx += 1;
-                    sorted_result_sender.send(Some(msg_vals)).unwrap();
+                    sorted_result_sender.send(Some(msg_vals)).await.unwrap();
                 } else {
                     parsed_ooo_chunks.push((-(chunk_idx as i64), msg_vals))
                 }
             }
             Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}
             Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                sorted_result_sender.send(None).unwrap();
+                sorted_result_sender.send(None).await.unwrap();
                 break;
             }
         }
@@ -280,7 +158,7 @@ async fn order_parsed_messaged(
                     if -chunk_idx as usize == next_idx {
                         let (_, msg_vals) = parsed_ooo_chunks.pop().unwrap();
                         next_idx += 1;
-                        sorted_result_sender.send(Some(msg_vals)).unwrap();
+                        sorted_result_sender.send(Some(msg_vals)).await.unwrap();
                     } else {
                         break;
                     }
@@ -342,7 +220,7 @@ async fn parse_chunk(
 }
 
 impl BagMessageIterator {
-    fn new(bag: Bag, meta: Meta, start: u64, end: u64, chunk_infos: Vec<ChunkInfo>) -> Self {
+    pub(crate) fn new(bag: Bag, meta: Meta, start: u64, end: u64, chunk_infos: Vec<ChunkInfo>, config: BagMessageIteratorConfig) -> Self {
         let con_to_msg = meta.borrow_connection_to_id_message();
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -352,7 +230,7 @@ impl BagMessageIterator {
             .build()
             .unwrap();
 
-        let (message_sender, message_reader) = tokio::sync::mpsc::unbounded_channel();
+        let (message_sender, message_reader) = tokio::sync::mpsc::channel(10);
         runtime.spawn(start_parse_msgs(
             bag,
             chunk_infos,
@@ -366,6 +244,7 @@ impl BagMessageIterator {
             _runtime: runtime,
             message_reader,
             msg_queue: VecDeque::new(),
+            config
         };
 
         s

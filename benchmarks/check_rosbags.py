@@ -3,20 +3,26 @@ import tqdm
 
 import rosbag
 from rosbags.highlevel import AnyReader
-from rosbags_rs import Bag
+from rustbag import Bag
 from embag import View
 
-path = Path(__file__).parent.parent / "HMB_1.bag"
+bag_name = "20210828_2.bag"
+
+path = Path(__file__).parent.parent / "temp" / bag_name
+# bag = Bag(f"s3://test-bags/{bag_name}", {
+#     "endpoint": "http://localhost:9000",
+#     "access_key_id": "minioadmin",
+#     "secret_access_key": "minioadmin",
+#     "allow_http": "true",
+# })
+bag = Bag(f"file://{str(path.absolute())}")
+for msg in tqdm.tqdm(bag.read_messages(), desc="rs"):
+    pass
 
 # create reader instance and open for reading
 with AnyReader([path]) as reader:
     for connection, timestamp, rawdata in tqdm.tqdm(reader.messages(), desc="rosbags"):
         msg = reader.deserialize(rawdata, connection.msgtype)
-        # d = msg.fields()
-
-bag = Bag(str(path))
-for msg in tqdm.tqdm(bag.read_messages(), desc="rs"):
-    pass
 
 view = View()
 view.addBag(str(path))

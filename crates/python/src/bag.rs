@@ -22,7 +22,7 @@ impl Bag {
     pub fn new<'p>(
         _py: Python<'p>,
         bag_uri: &str,
-        options: Option<HashMap<&str, String>>
+        storage_options: Option<HashMap<&str, String>>
     ) -> Self {
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -31,7 +31,7 @@ impl Bag {
             .unwrap();
 
         let inner = runtime.block_on(async {
-            RustBag::try_new_from_url(&Url::parse(bag_uri).unwrap(), options).await.unwrap()
+            RustBag::try_new_from_url(&Url::parse(bag_uri).unwrap(), storage_options).await.unwrap()
         });
 
         Self {

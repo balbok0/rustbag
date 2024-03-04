@@ -1,5 +1,8 @@
-# Minio
+# Benchmarks/Minio
 benchmarks/example_bags
+s3/
+.minio-creds
+
 
 # Temporary folders
 temp/

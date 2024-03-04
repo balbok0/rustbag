@@ -6,12 +6,24 @@ build-backend = "maturin"
 name = "rustbag"
 requires-python = ">=3.8"
 classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dynamic = ["version"]
 readme = "README.md"
+description = "ROSBag Reader focused on cloud storage access, written in Rust."
+authors = [
+  {name = "Jakub Filipek", email = "jfilipek@proton.me"}
+]
+
+[project.urls]
+Documentation = "https://balbok0.github.io/rustbag/"
+Repository = "https://github.com/balbok0/rustbag"
+Issues = "https://github.com/balbok0/rustbag/issues"
+
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

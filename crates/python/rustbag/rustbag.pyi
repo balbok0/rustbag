@@ -36,6 +36,7 @@ class Bag:
 
         Yields:
             Iterator: Iterator through tuples of:
+
                 1. int - timestamp of message (according to bag, not from header)
                 2. int - connection id
                 3. MsgValue - deserialized message object

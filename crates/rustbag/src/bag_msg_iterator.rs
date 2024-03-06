@@ -1,3 +1,5 @@
+//! bag_msg_iterator module contains `BagMessageIterator` struct which is used when reading bags.
+
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 
 use anyhow::{self, Result};
@@ -20,8 +22,16 @@ use crate::{
     }, Bag
 };
 
+/// BagMessageIteratorConfig is a configuration for `BagMessageIterator`.
+/// It is meant to be used to tune performance for particular use-cases.
+///
+/// For example, if one has a light workload, or is limited by network latency
+/// number of threads used can be bumped to more than 4 to speed up access of, parsing of chunks.
+///
+/// On the other hand if network bandwidth is a limited factor, bumping number of threads to 2 is an option.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct BagMessageIteratorConfig {
+    /// Number of threads used when reading a bag. **Values below 2 are not recommended.** Default is 4.
     pub num_threads: u32,
 }
 
@@ -40,13 +50,23 @@ impl From<HashMap<String, String>> for BagMessageIteratorConfig {
 }
 
 
+/// BagMessageIterator is a class meant for iteration of messages.
+///
 #[derive(Debug)]
 pub struct BagMessageIterator {
+    /// Tokio runtime to use in the multithreaded message parsing
     _runtime: Runtime,
+
+    /// Receiver for messages from each chunk
     message_reader: Receiver<Option<Vec<MsgIterValue>>>,
+
+    /// Queue for (flattened for each chunk) messages from the above receiver
     msg_queue: VecDeque<MsgIterValue>,
-    config: BagMessageIteratorConfig,
+
+    /// Configuration specifying this iterator (number of threads etc.)
+    _config: BagMessageIteratorConfig,
 }
+
 
 pub(super) async fn start_parse_msgs(
     bag: Bag,
@@ -224,7 +244,7 @@ impl BagMessageIterator {
         let con_to_msg = meta.borrow_connection_to_id_message();
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(8)
+            .worker_threads(usize::try_from(config.num_threads).unwrap())
             .enable_time()
             .enable_io()
             .build()
@@ -244,7 +264,7 @@ impl BagMessageIterator {
             _runtime: runtime,
             message_reader,
             msg_queue: VecDeque::new(),
-            config
+            _config: config
         };
 
         s

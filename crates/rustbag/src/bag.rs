@@ -1,3 +1,5 @@
+//! Bag module contains the main struct of this repo (`Bag`)
+
 use std::{
     collections::HashMap,
     path::Path,
@@ -17,14 +19,23 @@ use crate::{
 };
 use url::Url;
 
+/// Bag is used to represent a singular bag file.
+/// It exposes some of the metadata of the bag, as well as ability to read messages.
 #[derive(Debug, Clone)]
 pub struct Bag {
+    /// Metadata of the bag, contains information from ChunkInfos and Connections from the end of the bag
     bag_meta: OnceCell<Meta>,
+
+    /// Header from first record of the bag.
     bag_header: OnceCell<BagHeader>,
+
+    /// Cursor (cloud-based) to access specific byte ranges of the bag
     pub(crate) cursor: Cursor,
 }
 
 impl Bag {
+    /// Creates a Bag given a object_store and object_meta from object_store crate.
+    /// This is the  most fine-grained constructor available.
     pub fn try_new_from_object_store_meta(
         object_store: Arc<Box<dyn ObjectStore>>,
         object_meta: ObjectMeta,
@@ -38,6 +49,10 @@ impl Bag {
         })
     }
 
+    /// Creates a Bag given an url string.
+    /// See `object_store::parse_url` and `object_store::parse_url_opts` for more detailed documentation of arguments.
+    ///
+    /// Errors if either one of above functions errors, or if the object does not exist at specified url.
     pub async fn try_new_from_url<I, K, V>(url: &Url, options: Option<I>) -> Result<Self>
     where
         I: IntoIterator<Item = (K, V)>,
@@ -55,6 +70,7 @@ impl Bag {
     }
 
 
+    /// Creates a Bag given local file path. Errors if path does not exist.
     pub async fn try_from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
         let obj_store = object_store::local::LocalFileSystem::new();
         let obj_path = object_store::path::Path::from_filesystem_path(path)?;
@@ -63,12 +79,16 @@ impl Bag {
         Bag::try_new_from_object_store_meta(Arc::new(Box::new(obj_store)), obj_meta)
     }
 
-    pub async fn connections_by_topic(&self) -> Result<&HashMap<String, Vec<Connection>>> {
+    /// Returns map from topics to all connections that reference each topic.
+    /// Typically not useful, and users can use `Bag::topics` instead.
+    pub async fn connections_by_topic(&self) -> &HashMap<String, Vec<Connection>> {
         let meta = self.borrow_meta().await;
 
-        Ok(&meta.topic_to_connections)
+        &meta.topic_to_connections
     }
 
+    /// Returns vector of all topics in the bag.
+    /// For more granular information please see `Bag::connections_by_topic`.
     pub async fn topics(&self) -> Vec<&String> {
         let meta = self.borrow_meta().await;
 
@@ -77,12 +97,14 @@ impl Bag {
         topics
     }
 
+    /// Simple wrapper to get bag_header field, without having to type out get_or_try_init each time
     async fn borrow_bag_header(&self) -> Result<&BagHeader> {
         self.bag_header
             .get_or_try_init(|| async { read_bag_header(&self.cursor).await })
             .await
     }
 
+    /// Simple wrapper to get bag_meta field, without having to type out get_or_try_init each time
     async fn borrow_meta(&self) -> &Meta {
         let meta = self
             .bag_meta
@@ -103,6 +125,12 @@ impl Bag {
         meta.unwrap()
     }
 
+    /// Reads messages from a bag.
+    /// Messages can be additionally filtered by topic, start and end (both relative to the start of the bag, in nano seconds).
+    /// This filtering is preferred than doing it by hand on the user side, since it allows for skipping irrelevant chunks.
+    ///
+    /// Configuration should also be specified, and can be tuned to workload provided.
+    /// The default configuration provides good performance, without taking too much compute.
     pub async fn read_messages(
         &self,
         topics: Option<Vec<String>>,
@@ -134,12 +162,14 @@ impl Bag {
         iter
     }
 
+    /// Returns total number of messages in the bag.
+    /// For per-topic counts please see `Bag::connections_by_topic`.
     pub async fn num_messages(&self) -> u64 {
         self.borrow_meta().await.num_messages()
     }
 }
 
-// Helper Function
+/// Helper Function to read a bag header from bytes
 async fn read_bag_header(cursor: &Cursor) -> Result<BagHeader> {
     let bag_version_header = cursor.read_bytes(0, VERSION_LEN).await?;
     if bag_version_header != VERSION_STRING {

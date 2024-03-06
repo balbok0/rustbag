@@ -31,3 +31,4 @@ jobs:
       - name: Deploy with mike 🚀
         run: |
           mike deploy --push ${{ github.ref_name }}
+          mike set-default --push ${{ github.ref_name }}

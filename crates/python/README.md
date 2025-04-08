@@ -3,6 +3,10 @@
 [![PyPI](https://img.shields.io/pypi/dm/rustbag?color=00ADD4)](https://pypi.org/project/rustbag/)
 [![License](https://img.shields.io/github/license/balbok0/rustbag)](./LICENSE)
 
+## Deprecation Notice
+    `rustbag` was pulled into dev cycle of my current employer (Overland AI), and migrated to internal repo as of 03/24.
+    I am hoping to make it open-source again soon, as many developments made it not broken, much more useful and easier to work with.
+
 RustBag is a yet another ROSBag reader. It's main feature is the ability to read directly from an Object Storage, like AWS S3.
 Additionally, it is *fast*, with speeds somewhere in between [rosbags](https://ternaris.gitlab.io/rosbags/) and [embag](https://github.com/embarktrucks/embag).
 It is also written in Rust.

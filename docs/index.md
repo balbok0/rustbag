@@ -1,13 +1,15 @@
 # RustBag
-<img src="./assets/logo.png" alt="logo" width="20%"/>
+
+!!! warning "Deprecation Notice"
+
+    `rustbag` was pulled into dev cycle of my current employer (Overland AI), and migrated to internal repo as of 03/24.
+    I am hoping to make it open-source again soon, as many developments made it not broken, much more useful and easier to work with.
+
+[![Documentation](https://img.shields.io/badge/docs-passing-green)](https://balbok0.github.io/rustbag/)
 
 RustBag is a yet another ROSBag reader. It's main feature is the ability to read directly from an Object Storage, like AWS S3.
 Additionally, it is *fast*, with speeds somewhere in between [rosbags](https://ternaris.gitlab.io/rosbags/) and [embag](https://github.com/embarktrucks/embag).
 
-!!! warning
-
-    RustBag is still in development.
-    While the basic functionality (reading bags) is provided, there are still feature, documentation, and performance improvements that we want to add before making a full release.
 
 ## Getting Started
 See [Getting Started page](./getting_started.md)
